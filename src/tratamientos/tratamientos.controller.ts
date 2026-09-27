@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Param, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { EntityManager } from 'typeorm';
 import { TratamientosService } from './tratamientos.service.js';
@@ -23,6 +23,22 @@ export class TratamientosController {
     @CurrentEntityManager() manager: EntityManager,
   ) {
     return this.tratamientosService.create(user.tenantId, createDto, manager);
+  }
+
+  /** Ruta más específica antes de animal/:animalId */
+  @Get('animal/:animalId/estado-sanitario')
+  getEstadoSanitario(
+    @Param('animalId') animalId: string,
+    @Query('fechaReferencia') fechaReferencia: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.tratamientosService.getEstadoSanitario(
+      user.tenantId,
+      animalId,
+      manager,
+      fechaReferencia,
+    );
   }
 
   @Get('animal/:animalId')

@@ -4,6 +4,12 @@ import { Tratamiento } from './entities/tratamiento.entity.js';
 import { Animal } from '../animales/entities/animal.entity.js';
 import { CreateTratamientoDto } from './dto/create-tratamiento.dto.js';
 import { UpdateTratamientoDto } from './dto/update-tratamiento.dto.js';
+import {
+  computeEstadoSanitario,
+  resolveRetiros,
+  todayIsoDate,
+  type EstadoSanitarioResult,
+} from './retiro-calc.js';
 
 @Injectable()
 export class TratamientosService {
@@ -12,9 +18,6 @@ export class TratamientosService {
     createDto: CreateTratamientoDto,
     manager: EntityManager,
   ) {
-    // Este era el único módulo que no comprobaba la pertenencia del animal
-    // antes de escribir: confiaba solo en la FK y en RLS. Con la comprobación,
-    // un animalId ajeno responde 404 en vez de un error de base de datos.
     const animal = await manager.findOne(Animal, {
       where: { id: createDto.animalId, tenantId },
     });
@@ -24,9 +27,28 @@ export class TratamientosService {
       );
     }
 
+    const retiros = resolveRetiros({
+      fecha: createDto.fecha,
+      diasRetiro: createDto.diasRetiro,
+      diasRetiroLeche: createDto.diasRetiroLeche,
+      diasRetiroCarne: createDto.diasRetiroCarne,
+    });
+
     const newEntity = manager.create(Tratamiento, {
-      ...createDto,
+      animalId: createDto.animalId,
+      farmaco: createDto.farmaco,
+      dosis: createDto.dosis,
+      via: createDto.via,
+      fecha: createDto.fecha,
+      diagnostico: createDto.diagnostico,
+      veterinario: createDto.veterinario,
+      documentoUrl: createDto.documentoUrl ?? null,
       tenantId,
+      diasRetiro: retiros.diasRetiro,
+      diasRetiroLeche: retiros.diasRetiroLeche,
+      diasRetiroCarne: retiros.diasRetiroCarne,
+      fechaLiberacionLeche: retiros.fechaLiberacionLeche,
+      fechaLiberacionCarne: retiros.fechaLiberacionCarne,
     });
     return manager.save(newEntity);
   }
@@ -36,6 +58,30 @@ export class TratamientosService {
       where: { tenantId, animalId },
       order: { fecha: 'DESC', createdAt: 'DESC' },
     });
+  }
+
+  async getEstadoSanitario(
+    tenantId: string,
+    animalId: string,
+    manager: EntityManager,
+    fechaReferencia?: string,
+  ): Promise<EstadoSanitarioResult> {
+    const tratamientos = await this.findAllByAnimal(
+      tenantId,
+      animalId,
+      manager,
+    );
+    const ref = fechaReferencia?.slice(0, 10) || todayIsoDate();
+    return computeEstadoSanitario(
+      animalId,
+      tratamientos.map((t) => ({
+        id: t.id,
+        farmaco: t.farmaco,
+        fechaLiberacionLeche: t.fechaLiberacionLeche,
+        fechaLiberacionCarne: t.fechaLiberacionCarne,
+      })),
+      ref,
+    );
   }
 
   async update(
@@ -51,7 +97,32 @@ export class TratamientosService {
       throw new NotFoundException(`Tratamiento con ID ${id} no encontrado`);
     }
 
-    manager.merge(Tratamiento, tratamiento, updateDto);
+    const fecha = updateDto.fecha ?? tratamiento.fecha;
+    const retiros = resolveRetiros({
+      fecha,
+      diasRetiro:
+        updateDto.diasRetiro !== undefined
+          ? updateDto.diasRetiro
+          : tratamiento.diasRetiro,
+      diasRetiroLeche:
+        updateDto.diasRetiroLeche !== undefined
+          ? updateDto.diasRetiroLeche
+          : tratamiento.diasRetiroLeche,
+      diasRetiroCarne:
+        updateDto.diasRetiroCarne !== undefined
+          ? updateDto.diasRetiroCarne
+          : tratamiento.diasRetiroCarne,
+    });
+
+    manager.merge(Tratamiento, tratamiento, {
+      ...updateDto,
+      fecha,
+      diasRetiro: retiros.diasRetiro,
+      diasRetiroLeche: retiros.diasRetiroLeche,
+      diasRetiroCarne: retiros.diasRetiroCarne,
+      fechaLiberacionLeche: retiros.fechaLiberacionLeche,
+      fechaLiberacionCarne: retiros.fechaLiberacionCarne,
+    });
     return manager.save(tratamiento);
   }
 }

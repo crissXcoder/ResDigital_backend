@@ -1,4 +1,11 @@
-import { IsString, IsUUID, IsOptional, IsNumber, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsUUID,
+  IsOptional,
+  IsNumber,
+  IsDateString,
+  Min,
+} from 'class-validator';
 
 export class CreateTratamientoDto {
   @IsUUID()
@@ -24,9 +31,21 @@ export class CreateTratamientoDto {
   @IsOptional()
   veterinario?: string;
 
+  /** Campo legado; se usa como fallback si faltan los duales. */
   @IsNumber()
+  @Min(0)
   @IsOptional()
   diasRetiro?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  diasRetiroLeche?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  diasRetiroCarne?: number;
 
   @IsString()
   @IsOptional()

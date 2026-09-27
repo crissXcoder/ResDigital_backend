@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Animal } from '../../animales/entities/animal.entity.js';
 
 @Entity('tratamiento_sanitario')
@@ -34,8 +42,21 @@ export class Tratamiento {
   @Column({ type: 'text', nullable: true })
   veterinario: string;
 
+  /** Legado: max(leche, carne). Se mantiene por compatibilidad. */
   @Column({ name: 'dias_retiro', type: 'int', default: 0 })
   diasRetiro: number;
+
+  @Column({ name: 'dias_retiro_leche', type: 'int', default: 0 })
+  diasRetiroLeche: number;
+
+  @Column({ name: 'dias_retiro_carne', type: 'int', default: 0 })
+  diasRetiroCarne: number;
+
+  @Column({ name: 'fecha_liberacion_leche', type: 'date', nullable: true })
+  fechaLiberacionLeche: string | null;
+
+  @Column({ name: 'fecha_liberacion_carne', type: 'date', nullable: true })
+  fechaLiberacionCarne: string | null;
 
   @Column({ name: 'documento_url', type: 'text', nullable: true })
   documentoUrl: string | null;
