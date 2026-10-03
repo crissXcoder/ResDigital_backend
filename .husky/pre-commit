@@ -1,27 +1,5 @@
 #!/bin/sh
 
-# Barrera local contra el incidente que ya ocurrió: credenciales de producción
-# commiteadas en scripts sueltos.
-#
-# Si gitleaks no está instalado, el hook avisa pero no bloquea: no tiene sentido
-# frenar el trabajo de un compañero por una herramienta que todavía no tiene.
-# La red real está en CI, que sí es obligatoria.
-
-if command -v gitleaks >/dev/null 2>&1; then
-  echo "[pre-commit] Buscando secretos en los cambios preparados..."
-  if ! gitleaks protect --staged --redact --config .gitleaks.toml; then
-    echo ""
-    echo "[pre-commit] BLOQUEADO: se detectó lo que parece una credencial."
-    echo "  Nada que se parezca a una contraseña, una cadena de conexión o una"
-    echo "  API key va al repositorio. Usá variables de entorno (.env, que está"
-    echo "  en .gitignore) y documentá la variable en .env.example."
-    echo ""
-    echo "  Si es un falso positivo, agregá el patrón a la allowlist de .gitleaks.toml."
-    exit 1
-  fi
-else
-  echo "[pre-commit] gitleaks no está instalado; se omite el escaneo de secretos."
-  echo "  Instalalo con: brew install gitleaks   |   scoop install gitleaks"
-fi
-
-npx lint-staged
+#!/bin/sh
+set -eu
+node tooling/security-tools.mjs gitleaks-protect
