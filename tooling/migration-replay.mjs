@@ -34,12 +34,16 @@ try {
   const dataSource = resolve(root, 'src/database/data-source.ts');
   const run = spawnSync(process.execPath, ['--env-file-if-exists=.env', '--import', 'tsx', cli, 'migration:run', '--dataSource', dataSource], { cwd: root, env, stdio: 'inherit' });
   if (run.status !== 0) throw new Error('TypeORM no pudo ejecutar todas las migraciones.');
-  const show = spawnSync(process.execPath, ['--env-file-if-exists=.env', '--import', 'tsx', cli, 'migration:show', '--dataSource', dataSource], { cwd: root, env, encoding: 'utf8' });
-  if (show.status !== 0) throw new Error(`TypeORM no pudo verificar el estado final de migraciones: ${(show.stderr ?? '').slice(-2000)}`);
-  const unapplied = show.stdout.match(/^\s*\[ \]/gm) ?? [];
-  const applied = show.stdout.match(/^\s*\[X\]/gm) ?? [];
-  if (!applied.length || unapplied.length) throw new Error(`Replay incompleto: aplicadas=${applied.length}, pendientes=${unapplied.length}.`);
-  process.stdout.write(`Replay confirmado: ${applied.length} migraciones aplicadas a la BD descartable.\n`);
+  const verify = spawnSync(process.execPath, [
+    '--env-file-if-exists=.env',
+    '--import',
+    'tsx',
+    '--input-type=module',
+    '-e',
+    "import dataSource from './src/database/data-source.ts'; try { await dataSource.initialize(); if (await dataSource.showMigrations()) throw new Error('Quedaron migraciones pendientes.'); console.log(`Replay confirmado: ${dataSource.migrations.length} migraciones cargadas y ninguna pendiente.`); } finally { if (dataSource.isInitialized) await dataSource.destroy(); }",
+  ], { cwd: root, env, encoding: 'utf8' });
+  if (verify.status !== 0) throw new Error(`TypeORM no pudo verificar el estado final de migraciones: ${(verify.stderr ?? '').slice(-2000)}`);
+  process.stdout.write(verify.stdout);
 } finally {
   if (started) execFileSync('docker', ['rm', '--force', container], { cwd: root, stdio: 'ignore' });
 }
