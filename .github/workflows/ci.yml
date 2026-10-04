@@ -1,54 +1,160 @@
-name: CI
-
-# Existe porque el repositorio no tenía ninguna verificación automática: siete
-# ramas y los PR #3 al #9 se mergearon sin que nada corriera el linter, el
-# compilador ni los tests. Esa ausencia es la causa mecánica de que una
-# contraseña de producción llegara a main en tres commits distintos.
+name: Backend CI
 
 on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main, dev]
-  pull_request:
-    branches: [main, dev, 'feature/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  verificar:
-    name: Lint, tipos y pruebas unitarias
-    runs-on: ubuntu-latest
-
+  policy:
+    name: Backend policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          # gitleaks necesita el historial para revisar los commits del PR.
+          persist-credentials: false
           fetch-depth: 0
-
-      - name: Detectar secretos
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
-
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          version: 10
+          node-version: 24.14.0
+          package-manager-cache: false
+      - run: node tooling/git-policy.mjs
 
-      - uses: actions/setup-node@v4
+  secrets:
+    name: Backend secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          node-version: 22
-          cache: pnpm
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - run: node tooling/security-tools.mjs gitleaks-ci
 
+  dependencies:
+    name: Backend dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.32.1
+      - name: Check manifest and lockfile
+        run: pnpm install --lockfile-only --frozen-lockfile --ignore-scripts
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  quality:
+    name: Backend quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.32.1
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
 
-      - name: Lint
-        run: pnpm lint
+  migration-replay:
+    name: Backend migration replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.32.1
+      - run: pnpm install --frozen-lockfile
+      - name: Replay migrations in a disposable database
+        run: node tooling/migration-replay.mjs
 
-      - name: Verificación de tipos
-        run: pnpm typecheck
+  workflow-lint:
+    name: Backend workflow validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - run: node tooling/security-tools.mjs actionlint
+      - run: node tooling/git-policy.mjs --verify-workflows
 
-      - name: Pruebas unitarias
-        # Solo unitarias. Las de integración escriben en la base compartida del
-        # equipo y exigen ALLOW_DB_INTEGRATION_TESTS, que CI no define a propósito.
-        run: pnpm test
-
-      - name: Build de producción
-        run: pnpm build
+  required:
+    name: Backend required
+    if: always()
+    needs: [policy, secrets, dependencies, quality, migration-replay, workflow-lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.14.0
+          package-manager-cache: false
+      - name: Require every CI job to pass
+        env:
+          JOBS: ${{ toJson(needs) }}
+        run: node tooling/required-status.mjs

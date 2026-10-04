@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/dev)
+      echo "Push directo bloqueado a $remote_ref; integra mediante PR revisado."
+      exit 1
+      ;;
+  esac
+done

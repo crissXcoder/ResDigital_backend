@@ -1,0 +1,13 @@
+{
+  "name": "Immutable ResDigital tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v*", "refs/tags/resdigital-*"],
+      "exclude": []
+    }
+  },
+  "rules": [{ "type": "deletion" }, { "type": "update" }],
+  "bypass_actors": []
+}
