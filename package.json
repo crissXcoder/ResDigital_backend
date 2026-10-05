@@ -7,6 +7,12 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
+    "git:policy": "node tooling/git-policy.mjs",
+    "git:workflows": "node tooling/security-tools.mjs actionlint && node tooling/git-policy.mjs --verify-workflows",
+    "git:tools": "node tooling/security-tools.mjs actionlint",
+    "git:setup-hooks": "node tooling/install-hooks.mjs",
+    "test:policy": "node --test tooling/tests/*.test.mjs",
+    "migration:replay": "node tooling/migration-replay.mjs",
     "build": "nest build",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -30,6 +36,10 @@
     "seed:sanitary": "tsx --env-file=.env src/database/scripts/seed-sanitary.ts",
     "seed:reproductivo": "tsx --env-file=.env src/database/scripts/seed-reproductivo-dev.ts",
     "prepare": "husky"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=24.14.0 <25"
   },
   "lint-staged": {
     "*.ts": [
