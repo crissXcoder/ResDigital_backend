@@ -34,6 +34,7 @@
     "migration:show": "tsx --env-file=.env node_modules/typeorm/cli.js migration:show --dataSource src/database/data-source.ts",
     "seed:dev": "tsx --env-file=.env src/database/scripts/seed-dev.ts",
     "seed:sanitary": "tsx --env-file=.env src/database/scripts/seed-sanitary.ts",
+    "seed:reproductivo": "tsx --env-file=.env src/database/scripts/seed-reproductivo-dev.ts",
     "prepare": "husky"
   },
   "packageManager": "pnpm@10.32.1",

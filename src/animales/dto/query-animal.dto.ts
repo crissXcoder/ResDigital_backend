@@ -12,4 +12,8 @@ export class QueryAnimalDto {
   @IsOptional()
   @IsString()
   arete?: string;
+
+  @IsOptional()
+  @IsString()
+  buscar?: string;
 }

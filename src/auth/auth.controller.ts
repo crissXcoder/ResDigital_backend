@@ -5,6 +5,7 @@ import {
   Body,
   Req,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { CurrentUser } from './decorators/current-user.decorator.js';
 import { Roles } from './decorators/roles.decorator.js';
@@ -22,8 +23,14 @@ interface UsuarioRow {
   correo: string;
 }
 
+interface TenantRow {
+  nombre_finca: string;
+}
+
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(private readonly invitationsService: InvitationsService) {}
 
   /**
@@ -42,13 +49,14 @@ export class AuthController {
 
     let nombreCompleto =
       (user.rawClaims['nombre_completo'] as string) ||
-      (user.rawClaims['user_metadata'] as Record<string, unknown> | undefined)?.[
-        'nombre_completo'
-      ] as string ||
+      ((
+        user.rawClaims['user_metadata'] as Record<string, unknown> | undefined
+      )?.['nombre_completo'] as string) ||
       '';
     let correo = user.email;
+    let nombreFinca = '';
 
-    // Si la conexión transaccional con RLS está activa, consultar directamente la tabla usuario
+    // Si la conexión transaccional con RLS está activa, consultar directamente las tablas
     if (req.entityManager) {
       try {
         const rows = await req.entityManager.query<UsuarioRow[]>(
@@ -60,8 +68,34 @@ export class AuthController {
           nombreCompleto = rows[0].nombre_completo || nombreCompleto;
           correo = rows[0].correo || correo;
         }
-      } catch {
-        // En caso de fallo en BD o tabla no migrada, mantener los datos extraídos del JWT
+      } catch (err) {
+        this.logger.warn(
+          `[perfil] No se pudo leer public.usuario para userId=${user.userId}: ${(err as Error).message}`,
+        );
+      }
+
+      try {
+        // Nota: la política RLS de tenant evalúa auth.jwt() ->> 'tenant_id'.
+        // Si tenant_id está anidado en app_metadata el RLS lo bloquea.
+        // Usamos current_setting('app.current_tenant_id') que el interceptor
+        // siempre setea con el tenantId verificado por el AuthGuard.
+        const tenantRows = await req.entityManager.query<TenantRow[]>(
+          `SELECT nombre_finca FROM public.tenant
+           WHERE id = (current_setting('app.current_tenant_id', true))::uuid
+           LIMIT 1;`,
+        );
+
+        if (tenantRows && tenantRows.length > 0) {
+          nombreFinca = tenantRows[0].nombre_finca;
+        } else {
+          this.logger.warn(
+            `[perfil] No se encontró fila en public.tenant para tenantId=${user.tenantId}`,
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[perfil] No se pudo leer public.tenant para tenantId=${user.tenantId}: ${(err as Error).message}`,
+        );
       }
     }
 
@@ -71,6 +105,7 @@ export class AuthController {
       rol: user.rol,
       nombreCompleto: nombreCompleto || user.email.split('@')[0],
       correo,
+      nombreFinca,
     };
   }
 
@@ -109,4 +144,3 @@ export class AuthController {
     );
   }
 }
-
