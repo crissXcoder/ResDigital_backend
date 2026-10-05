@@ -3,9 +3,10 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
-  Logger,
-  Optional,
+  OnModuleInit,
+  ForbiddenException,
 } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { DataSource, type QueryRunner, type EntityManager } from 'typeorm';
 import {
   Observable,
@@ -27,7 +28,7 @@ export interface RequestWithRls extends Request {
 
 /**
  * ==============================================================================
- * CONFIRMACIÓN DE SEGURIDAD OBLIGATORIA (Regla de Arquitectura y RLS):
+ * VALIDACIÓN DE SEGURIDAD OBLIGATORIA (Regla de Arquitectura y RLS):
  * ------------------------------------------------------------------------------
  * El rol de base de datos que utiliza la aplicación NestJS para conectarse
  * (ej. el usuario configurado en DB_USER o DATABASE_URL) NUNCA debe poseer el
@@ -35,25 +36,67 @@ export interface RequestWithRls extends Request {
  *
  * Si el rol tuviera 'BYPASSRLS', PostgreSQL ignoraría todas las políticas de RLS
  * definidas en las tablas, anulando por completo el aislamiento entre fincas.
- * Si durante el despliegue o conexión se detecta que el rol tiene BYPASSRLS o
- * SUPERUSER, debe notificarse inmediatamente al líder técnico para ajustar
- * los privilegios en la base de datos a un rol de aplicación sin bypass.
+ * El arranque valida la identidad de la sesión, atributos y privilegios; si no
+ * coinciden con el rol dedicado, el proceso falla cerrado antes de servir HTTP.
  * ==============================================================================
  *
  * RlsTransactionInterceptor:
  * Abre una transacción aislada de TypeORM por cada petición autenticada y ejecuta:
  *   1. SELECT set_config('request.jwt.claims', $1, true);
- *   2. SET LOCAL ROLE authenticated;
+ *   2. SET LOCAL ROLE resdigital_app;
  *
  * Mantiene la conexión fija durante toda la ejecución del handler del controlador,
  * asegurando que las consultas intermedias no se devuelvan al pool de conexiones
  * antes de que RLS aplique sus filtros.
  */
 @Injectable()
-export class RlsTransactionInterceptor implements NestInterceptor {
-  private readonly logger = new Logger(RlsTransactionInterceptor.name);
+export class RlsTransactionInterceptor
+  implements NestInterceptor, OnModuleInit
+{
+  constructor(private readonly dataSource: DataSource) {}
 
-  constructor(@Optional() private readonly dataSource?: DataSource) {}
+  async onModuleInit(): Promise<void> {
+    if (!this.dataSource.isInitialized) {
+      throw new Error(
+        'La conexión PostgreSQL debe estar inicializada para activar RLS.',
+      );
+    }
+
+    const [identity] = await this.dataSource.query(`
+      SELECT
+        session_user::text AS session_role,
+        current_user::text AS current_role,
+        app_role.rolsuper AS is_superuser,
+        app_role.rolbypassrls AS bypasses_rls,
+        EXISTS (
+          SELECT 1 FROM pg_auth_members membership
+          WHERE membership.member = app_role.oid
+        ) AS has_role_memberships,
+        has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_public,
+        EXISTS (
+          SELECT 1 FROM pg_class relation
+          JOIN pg_namespace ns ON ns.oid = relation.relnamespace
+          WHERE ns.nspname = 'public' AND relation.relowner = app_role.oid
+        ) AS owns_public_table
+      FROM pg_roles app_role
+      WHERE app_role.rolname = current_user;
+    `);
+
+    if (
+      !identity ||
+      identity.session_role !== 'resdigital_app' ||
+      identity.current_role !== 'resdigital_app' ||
+      identity.is_superuser ||
+      identity.bypasses_rls ||
+      identity.has_role_memberships ||
+      identity.can_create_public ||
+      identity.owns_public_table
+    ) {
+      throw new Error(
+        'DATABASE_URL debe autenticar directamente como resdigital_app, sin membresías de roles, SUPERUSER, BYPASSRLS, CREATE en public ni propiedad de tablas.',
+      );
+    }
+  }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') {
@@ -67,11 +110,13 @@ export class RlsTransactionInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    // Si DataSource no está inicializado (ej. en entornos de pruebas aislados)
-    if (!this.dataSource?.isInitialized) {
-      this.logger.debug('DataSource no inicializado, omitiendo RlsTransactionInterceptor');
-      return next.handle();
+    if (!this.dataSource.isInitialized) {
+      throw new Error(
+        'La conexión PostgreSQL no está inicializada; se deniega acceso.',
+      );
     }
+
+    this.assertAuthenticatedContext(request.user);
 
     const queryRunner = this.dataSource.createQueryRunner();
 
@@ -116,7 +161,12 @@ export class RlsTransactionInterceptor implements NestInterceptor {
     await queryRunner.startTransaction();
 
     // Inyectar el JSON de claims completo en la sesión transaccional de PostgreSQL
-    const claimsJson = JSON.stringify(user.rawClaims);
+    const claimsJson = JSON.stringify({
+      ...user.rawClaims,
+      sub: user.userId,
+      tenant_id: user.tenantId,
+      rol: user.rol,
+    });
 
     await queryRunner.query('SELECT set_config($1, $2, true);', [
       'request.jwt.claims',
@@ -124,14 +174,28 @@ export class RlsTransactionInterceptor implements NestInterceptor {
     ]);
 
     // Compatibilidad con tablas creadas con la convención app.current_tenant_id (ej. animal)
-    if (user.tenantId) {
-      await queryRunner.query('SELECT set_config($1, $2, true);', [
-        'app.current_tenant_id',
-        user.tenantId,
-      ]);
-    }
+    await queryRunner.query('SELECT set_config($1, $2, true);', [
+      'app.current_tenant_id',
+      user.tenantId,
+    ]);
 
-    // Establecer el rol local a 'authenticated' para que PostgreSQL aplique las políticas RLS
-    await queryRunner.query('SET LOCAL ROLE authenticated;');
+    // El rol dedicado aplica las políticas sin concederle membresía de authenticated.
+    await queryRunner.query('SET LOCAL ROLE resdigital_app;');
+  }
+
+  private assertAuthenticatedContext(user: AuthenticatedUser): void {
+    const validRoles = ['propietario', 'administrador', 'peon', 'veterinario'];
+    if (
+      !isUUID(user.userId) ||
+      !isUUID(user.tenantId) ||
+      !validRoles.includes(user.rol) ||
+      !user.rawClaims ||
+      typeof user.rawClaims !== 'object' ||
+      Array.isArray(user.rawClaims)
+    ) {
+      throw new ForbiddenException(
+        'Contexto de autenticación incompleto para aplicar RLS.',
+      );
+    }
   }
 }
