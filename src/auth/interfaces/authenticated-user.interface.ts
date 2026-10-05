@@ -1,8 +1,5 @@
 export type RolUsuario =
-  | 'propietario'
-  | 'administrador'
-  | 'peon'
-  | 'veterinario';
+  'propietario' | 'administrador' | 'peon' | 'veterinario';
 
 export interface AuthenticatedUser {
   userId: string;
@@ -18,4 +15,5 @@ export interface UserProfileResponse {
   rol: RolUsuario;
   nombreCompleto: string;
   correo: string;
+  nombreFinca: string;
 }

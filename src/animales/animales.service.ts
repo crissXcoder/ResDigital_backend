@@ -43,6 +43,14 @@ export class AnimalesService {
       });
     }
 
+    if (query.buscar && query.buscar.trim()) {
+      const termino = `%${query.buscar.trim()}%`;
+      qb.andWhere(
+        '(animal.arete_interno ILIKE :termino OR animal.nombre ILIKE :termino OR animal.numero_oficial_diio ILIKE :termino)',
+        { termino },
+      );
+    }
+
     qb.orderBy('animal.arete_interno', 'ASC');
 
     return qb.getMany();
