@@ -30,15 +30,31 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     CREATE ROLE authenticated NOLOGIN NOINHERIT;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') THEN
+    CREATE ROLE authenticator LOGIN NOINHERIT;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
     CREATE ROLE supabase_auth_admin NOLOGIN NOINHERIT;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'resdigital_app') THEN
+    CREATE ROLE resdigital_app LOGIN NOINHERIT
+      NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
 END $$;
 
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+-- Credenciales aleatorias de un solo uso para el PostgREST efímero del smoke test.
+-- El proceso que invoca psql genera y suministra ambas variables.
+ALTER ROLE authenticator LOGIN PASSWORD :'api_password';
+ALTER ROLE resdigital_app PASSWORD :'app_password';
+GRANT anon, authenticated TO authenticator;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, authenticator, service_role;
+-- El script de aprovisionamiento anterior concedía CREATE directamente al rol.
+-- El replay debe probar que la migración elimina también ese permiso heredado.
+GRANT CREATE ON SCHEMA public TO resdigital_app;
 
 -- 3. Esquema `auth` mínimo.
 CREATE SCHEMA IF NOT EXISTS auth;
@@ -67,10 +83,13 @@ $$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role, supabase_auth_admin;
 GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated, service_role;
 
--- 4. Privilegios por defecto para las tablas que creen las migraciones, de modo
--- que las políticas `TO authenticated` tengan efecto real y no queden bloqueadas
--- antes por falta de GRANT.
+-- 4. La migración de aislamiento revoca defaults para el creador efectivo y
+-- para `postgres` cuando exista. Las migraciones conceden permisos explícitos.
+-- Reproduce los defaults públicos observados en Supabase: grants por esquema
+-- se suman al EXECUTE implícito global de PUBLIC y deben revocarse ambos.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+  GRANT ALL ON TABLES TO anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO authenticated;
+  GRANT ALL ON SEQUENCES TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;

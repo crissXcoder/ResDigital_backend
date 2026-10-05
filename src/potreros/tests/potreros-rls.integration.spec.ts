@@ -76,9 +76,9 @@ describe.skipIf(usuarios === null)(
         const claimsA = JSON.stringify({
           sub: userTenantA,
           tenant_id: tenantA,
-          user_role: 'propietario',
+          rol: 'propietario',
         });
-        await queryRunnerA.query('SET LOCAL ROLE authenticated;');
+        await queryRunnerA.query('SET LOCAL ROLE resdigital_app;');
         await queryRunnerA.query(
           `SELECT set_config('request.jwt.claims', $1, true);`,
           [claimsA],
@@ -120,9 +120,9 @@ describe.skipIf(usuarios === null)(
         const claimsB = JSON.stringify({
           sub: userTenantB,
           tenant_id: tenantB,
-          user_role: 'propietario',
+          rol: 'propietario',
         });
-        await queryRunnerB.query('SET LOCAL ROLE authenticated;');
+        await queryRunnerB.query('SET LOCAL ROLE resdigital_app;');
         await queryRunnerB.query(
           `SELECT set_config('request.jwt.claims', $1, true);`,
           [claimsB],
