@@ -86,6 +86,7 @@ export class AnimalesService {
       'fechaNacimiento',
       'fechaCompra',
       'potreroId',
+      'numeroOficialDiio',
     ];
 
     const payload: Record<string, unknown> = { ...dto };
@@ -94,6 +95,16 @@ export class AnimalesService {
         payload[campo] = null;
       }
     }
+
+    if (typeof payload.areteInterno === 'string') {
+      payload.areteInterno = payload.areteInterno.trim();
+    }
+
+    if (typeof payload.numeroOficialDiio === 'string') {
+      const trimmed = payload.numeroOficialDiio.trim();
+      payload.numeroOficialDiio = trimmed === '' ? null : trimmed;
+    }
+
     return payload;
   }
 
@@ -102,11 +113,40 @@ export class AnimalesService {
     createAnimalDto: CreateAnimalDto,
     manager: EntityManager,
   ) {
-    // El manejo de la violación de unicidad (23505) ya no vive acá: lo traduce
-    // AllExceptionsFilter, que lo convierte en 409 Conflict para todo el
-    // proyecto en vez de un 400 distinto por cada servicio.
+    const normalizado = this.normalizarOpcionales(createAnimalDto);
+
+    if (normalizado.areteInterno) {
+      const existenteArete = await manager.findOne(Animal, {
+        where: {
+          tenantId,
+          areteInterno: normalizado.areteInterno as string,
+        },
+        select: { id: true },
+      });
+      if (existenteArete) {
+        throw new ConflictException(
+          `Ya existe un animal con el arete interno "${normalizado.areteInterno}" en esta finca.`,
+        );
+      }
+    }
+
+    if (normalizado.numeroOficialDiio) {
+      const existenteDiio = await manager.findOne(Animal, {
+        where: {
+          tenantId,
+          numeroOficialDiio: normalizado.numeroOficialDiio as string,
+        },
+        select: { id: true },
+      });
+      if (existenteDiio) {
+        throw new ConflictException(
+          `Ya existe un animal registrado con el número oficial DIIO "${normalizado.numeroOficialDiio}" en esta finca.`,
+        );
+      }
+    }
+
     const animal = manager.create(Animal, {
-      ...this.normalizarOpcionales(createAnimalDto),
+      ...normalizado,
       tenantId,
     });
     return manager.save(animal);
@@ -119,7 +159,45 @@ export class AnimalesService {
     manager: EntityManager,
   ) {
     const animal = await this.findOne(id, tenantId, manager);
-    manager.merge(Animal, animal, this.normalizarOpcionales(updateAnimalDto));
+    const normalizado = this.normalizarOpcionales(updateAnimalDto);
+
+    if (
+      normalizado.areteInterno &&
+      normalizado.areteInterno !== animal.areteInterno
+    ) {
+      const existenteArete = await manager.findOne(Animal, {
+        where: {
+          tenantId,
+          areteInterno: normalizado.areteInterno as string,
+        },
+        select: { id: true },
+      });
+      if (existenteArete && existenteArete.id !== id) {
+        throw new ConflictException(
+          `Ya existe un animal con el arete interno "${normalizado.areteInterno}" en esta finca.`,
+        );
+      }
+    }
+
+    if (
+      normalizado.numeroOficialDiio &&
+      normalizado.numeroOficialDiio !== animal.numeroOficialDiio
+    ) {
+      const existenteDiio = await manager.findOne(Animal, {
+        where: {
+          tenantId,
+          numeroOficialDiio: normalizado.numeroOficialDiio as string,
+        },
+        select: { id: true },
+      });
+      if (existenteDiio && existenteDiio.id !== id) {
+        throw new ConflictException(
+          `Ya existe un animal registrado con el número oficial DIIO "${normalizado.numeroOficialDiio}" en esta finca.`,
+        );
+      }
+    }
+
+    manager.merge(Animal, animal, normalizado);
     return manager.save(animal);
   }
 
