@@ -19,12 +19,14 @@ if (process.env.DATABASE_URL)
   );
 const container = `resdigital-migrations-${randomUUID()}`;
 const postgrest = `resdigital-postgrest-${randomUUID()}`;
+const network = `resdigital-replay-${randomUUID()}`;
 const password = randomBytes(32).toString('hex');
 const appPassword = randomBytes(32).toString('hex');
 const apiPassword = randomBytes(32).toString('hex');
 const jwtSecret = randomBytes(32).toString('hex');
 let started = false;
 let postgrestStarted = false;
+let networkStarted = false;
 function docker(args) {
   return execFileSync('docker', args, {
     cwd: root,
@@ -33,10 +35,14 @@ function docker(args) {
   });
 }
 try {
+  docker(['network', 'create', network]);
+  networkStarted = true;
   docker([
     'run',
     '--detach',
     '--rm',
+    '--network',
+    network,
     '--name',
     container,
     '--publish',
@@ -166,6 +172,8 @@ try {
     'run',
     '--detach',
     '--rm',
+    '--network',
+    network,
     '--name',
     postgrest,
     '--publish',
@@ -174,8 +182,7 @@ try {
     [
       'PGRST_DB_URI=postgresql://authenticator:',
       apiPassword,
-      '@host.docker.internal:',
-      port,
+      `@${container}:5432`,
       '/resdigital_ci',
     ].join(''),
     '--env',
@@ -263,6 +270,11 @@ try {
     });
   if (started)
     execFileSync('docker', ['rm', '--force', container], {
+      cwd: root,
+      stdio: 'ignore',
+    });
+  if (networkStarted)
+    execFileSync('docker', ['network', 'rm', network], {
       cwd: root,
       stdio: 'ignore',
     });
