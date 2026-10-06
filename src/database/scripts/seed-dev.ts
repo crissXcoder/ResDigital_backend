@@ -103,8 +103,8 @@ async function runSeed() {
     dataSource = undefined;
   }
 
-  const auditService = new AuditAuthService(dataSource);
-  const rolesService = new RolesService(auditService, dataSource);
+  const auditService = new AuditAuthService();
+  const rolesService = new RolesService(auditService);
 
   // 4. Gestionar Tenant de Prueba Único (Idempotente)
   console.log(`\n--- Paso 1: Verificando Tenant Único '${NOMBRE_FINCA_DEMO}' ---`);
@@ -249,8 +249,35 @@ async function runSeed() {
             .eq('id', authUserId);
         }
 
-        // Llamar a RolesService.assignRole() — certificar auditoría y mutación
-        await rolesService.assignRole(authUserId, tenantId, userConfig.rol, 'SEED_DEV');
+        if (!dataSource?.isInitialized) {
+          throw new Error(
+            'No se puede certificar el cambio de rol sin conexión PostgreSQL.',
+          );
+        }
+        const resolvedTenantId = tenantId;
+
+        await dataSource.transaction(async (manager) => {
+          await manager.query('SELECT set_config($1, $2, true);', [
+            'request.jwt.claims',
+            JSON.stringify({
+              sub: authUserId,
+              tenant_id: resolvedTenantId,
+              rol: userConfig.rol,
+            }),
+          ]);
+          await manager.query('SELECT set_config($1, $2, true);', [
+            'app.current_tenant_id',
+            resolvedTenantId,
+          ]);
+          await manager.query('SET LOCAL ROLE resdigital_app;');
+          await rolesService.assignRole(
+            authUserId,
+            resolvedTenantId,
+            userConfig.rol,
+            'SEED_DEV',
+            manager,
+          );
+        });
         console.log(`  └─ Rol '${userConfig.rol}' certificado por RolesService para ${userConfig.email}`);
 
         // Asegurar app_metadata en Supabase Auth

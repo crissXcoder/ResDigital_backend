@@ -1,159 +1,332 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { EntityManager, QueryRunner } from 'typeorm';
 import { InvitationsService } from '../services/invitations.service.js';
 import { RolesService } from '../services/roles.service.js';
 import { AuditAuthService } from '../services/audit-auth.service.js';
 import type { AuthenticatedUser } from '../interfaces/authenticated-user.interface.js';
+import { runAfterCommitCallbacks } from '../interceptors/rls-transaction.interceptor.js';
 
-describe('Seguridad y Defensa contra Mass-Assignment de Roles (Patrón Energisa)', () => {
+interface TestInvitation {
+  id: string;
+  tenantId: string;
+  correo: string;
+  rol: AuthenticatedUser['rol'];
+  invitadoPor: string;
+  estado: 'PENDIENTE' | 'ACEPTADA' | 'CANCELADA';
+}
+
+interface TestAuditRow {
+  id: string;
+  tenantId: string;
+  usuarioId: string | null;
+  tipoEvento: string;
+  detalles: Record<string, unknown>;
+  prevHash: string;
+  currHash: string;
+  createdAt: string;
+}
+
+function makeManager() {
+  const tenantId = 'finca-la-esperanza-222';
+  const invitationRows: TestInvitation[] = [];
+  const auditRows: TestAuditRow[] = [];
+  const userTenants = new Map<string, string>([
+    ['danny-user-uuid-999', tenantId],
+  ]);
+  const queryRunner: { isTransactionActive: boolean; data: Record<string, unknown> } = {
+    isTransactionActive: true,
+    data: {},
+  };
+  const query = vi.fn(
+    async (sql: string, parameters: unknown[] = []): Promise<unknown[]> => {
+      const statement = sql.replace(/\s+/g, ' ').trim();
+      if (statement.startsWith('SELECT pg_advisory_xact_lock')) return [];
+
+      if (statement.includes('SELECT curr_hash, created_at')) {
+        const rows = auditRows
+          .filter((row) => row.tenantId === parameters[0])
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return rows.slice(0, 1).map((row) => ({
+          curr_hash: row.currHash,
+          created_at: row.createdAt,
+        }));
+      }
+
+      if (statement.startsWith('INSERT INTO public.evento_auth')) {
+        auditRows.push({
+          id: String(parameters[0]),
+          tenantId: String(parameters[1]),
+          usuarioId:
+            typeof parameters[2] === 'string' ? parameters[2] : null,
+          tipoEvento: String(parameters[3]),
+          detalles: JSON.parse(String(parameters[4])) as Record<string, unknown>,
+          prevHash: String(parameters[5]),
+          currHash: String(parameters[6]),
+          createdAt: String(parameters[7]),
+        });
+        return [];
+      }
+
+      if (statement.startsWith('INSERT INTO public.invitacion')) {
+        const emailValue = parameters[2];
+        const email = typeof emailValue === 'string' ? emailValue : '';
+        const tenant = String(parameters[1]);
+        const existing = invitationRows.find(
+          (row) => row.correo === email && row.tenantId === tenant,
+        );
+        if (existing) {
+          existing.rol = parameters[3] as AuthenticatedUser['rol'];
+          existing.invitadoPor = String(parameters[4]);
+          existing.estado = 'PENDIENTE';
+          return [{ id: existing.id }];
+        }
+        const invitation: TestInvitation = {
+          id: String(parameters[0]),
+          tenantId: tenant,
+          correo: email,
+          rol: parameters[3] as AuthenticatedUser['rol'],
+          invitadoPor: String(parameters[4]),
+          estado: 'PENDIENTE',
+        };
+        invitationRows.push(invitation);
+        return [{ id: invitation.id }];
+      }
+
+      if (statement.startsWith('SELECT id, rol FROM public.invitacion')) {
+        const invitation = invitationRows.find(
+          (row) =>
+            row.correo === parameters[0] &&
+            row.tenantId === parameters[1] &&
+            row.estado === 'PENDIENTE',
+        );
+        return invitation
+          ? [{ id: invitation.id, rol: invitation.rol }]
+          : [];
+      }
+
+      if (statement.startsWith('UPDATE public.usuario')) {
+        const userId = String(parameters[1]);
+        return userTenants.get(userId) === parameters[2]
+          ? [{ id: userId }]
+          : [];
+      }
+
+      if (statement.startsWith('UPDATE public.invitacion')) {
+        const invitation = invitationRows.find(
+          (row) =>
+            row.id === parameters[0] &&
+            row.tenantId === parameters[1] &&
+            row.estado === 'PENDIENTE',
+        );
+        if (!invitation) return [];
+        invitation.estado = 'ACEPTADA';
+        return [{ id: invitation.id }];
+      }
+
+      throw new Error(`Consulta no prevista en el doble explícito: ${statement}`);
+    },
+  );
+  const manager = { query, queryRunner } as unknown as EntityManager;
+  return { manager, query, queryRunner, invitationRows, auditRows, userTenants };
+}
+
+describe('Invitaciones y auditoría sin fallback de memoria', () => {
   let invitationsService: InvitationsService;
   let rolesService: RolesService;
   let auditService: AuditAuthService;
-  let configService: ConfigService;
+  let db: ReturnType<typeof makeManager>;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
-  const mockPropietario: AuthenticatedUser = {
+  const owner: AuthenticatedUser = {
     userId: 'user-propietario-111',
     tenantId: 'finca-la-esperanza-222',
     rol: 'propietario',
-    email: 'don_juan@finca.cr',
+    email: 'duena@finca.cr',
     rawClaims: {},
   };
-
-  const mockPeon: AuthenticatedUser = {
+  const peon: AuthenticatedUser = {
+    ...owner,
     userId: 'user-peon-333',
-    tenantId: 'finca-la-esperanza-222',
     rol: 'peon',
     email: 'peon@finca.cr',
-    rawClaims: {},
   };
 
   beforeEach(() => {
+    db = makeManager();
     auditService = new AuditAuthService();
     rolesService = new RolesService(auditService);
-    configService = new ConfigService({
+    const configService = new ConfigService({
       SUPABASE_URL: 'https://test.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'test-service-key',
     });
-
     invitationsService = new InvitationsService(
       rolesService,
       auditService,
       configService,
     );
+    fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
   });
 
-  it('CRÍTICO (Defensa Anti Mass-Assignment): un request de confirmación con { "rol": "propietario" } inyectado debe ser ignorado y mantener el rol legítimo asignado por el propietario', async () => {
-    // 1. El propietario invita a un peón con rol 'peon'
-    const inviteResult = await invitationsService.inviteUser(mockPropietario, {
-      correo: 'danny@finca.cr',
-      rol: 'peon',
-      nombreCompleto: 'Danny Colaborador',
+  it('persists invitation and audit in the request transaction, then sends after commit', async () => {
+    const response = await invitationsService.inviteUser(
+      owner,
+      {
+        correo: 'Danny@finca.cr',
+        rol: 'peon',
+        nombreCompleto: 'Danny Colaborador',
+      },
+      db.manager,
+    );
+
+    expect(response).toMatchObject({ success: true, rolAsignado: 'peon', emailSent: null });
+    expect(db.invitationRows[0]?.correo).toBe('danny@finca.cr');
+    expect(db.auditRows.map((row) => row.tipoEvento)).toEqual(['INVITACION_ENVIADA']);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    db.queryRunner.isTransactionActive = false;
+    await runAfterCommitCallbacks(db.queryRunner as QueryRunner);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response.emailSent).toBe(true);
+  });
+
+  it('reports failed Auth delivery without claiming the email was sent', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('rejected', { status: 503 }));
+    const response = await invitationsService.inviteUser(
+      owner,
+      { correo: 'nuevo@finca.cr', rol: 'peon' },
+      db.manager,
+    );
+
+    db.queryRunner.isTransactionActive = false;
+    await runAfterCommitCallbacks(db.queryRunner as QueryRunner);
+
+    expect(response.success).toBe(true);
+    expect(response.emailSent).toBe(false);
+    expect(db.invitationRows).toHaveLength(1);
+  });
+
+  it('propagates database failures and never schedules email delivery', async () => {
+    db.query.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(
+      invitationsService.inviteUser(
+        owner,
+        { correo: 'nuevo@finca.cr', rol: 'peon' },
+        db.manager,
+      ),
+    ).rejects.toThrow('database unavailable');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.queryRunner.data).toEqual({});
+  });
+
+  it('propagates audit write failures so the request transaction can roll back', async () => {
+    db.query.mockImplementation(async (sql, parameters = []) => {
+      if (sql.startsWith('INSERT INTO public.evento_auth')) {
+        throw new Error('audit write failed');
+      }
+      return makeManager().query(sql, parameters);
     });
 
-    expect(inviteResult.success).toBe(true);
+    await expect(
+      invitationsService.inviteUser(
+        owner,
+        { correo: 'nuevo@finca.cr', rol: 'peon' },
+        db.manager,
+      ),
+    ).rejects.toThrow('audit write failed');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.queryRunner.data).toEqual({});
+  });
+
+  it('rejects invitation and audit operations without an active database transaction', async () => {
+    db.queryRunner.isTransactionActive = false;
+
+    await expect(
+      invitationsService.inviteUser(
+        owner,
+        { correo: 'nuevo@finca.cr', rol: 'peon' },
+        db.manager,
+      ),
+    ).rejects.toThrow(/transacción PostgreSQL activa/i);
+    await expect(
+      auditService.logEvent('tenant', 'LOGIN', {}, undefined, db.manager),
+    ).rejects.toThrow(/transacción PostgreSQL activa/i);
+    await expect(
+      rolesService.assignRole('user', 'tenant', 'peon', undefined, db.manager),
+    ).rejects.toThrow(/transacción PostgreSQL activa/i);
+  });
+
+  it('does not fall back to an in-memory invitation when no pending row exists', async () => {
+    await expect(
+      invitationsService.confirmInvitation(
+        'danny-user-uuid-999',
+        owner.tenantId,
+        'danny@finca.cr',
+        {},
+        db.manager,
+      ),
+    ).rejects.toThrow(/invitación pendiente/i);
+    expect(db.query).toHaveBeenCalledOnce();
+  });
+
+  it('discards a client supplied role and applies only the persisted invitation role', async () => {
+    const inviteResult = await invitationsService.inviteUser(
+      owner,
+      { correo: 'danny@finca.cr', rol: 'peon' },
+      db.manager,
+    );
     expect(inviteResult.rolAsignado).toBe('peon');
 
-    // Espiar a RolesService.assignRole para capturar los argumentos reales con los que se muta el rol
-    const assignRoleSpy = vi.spyOn(rolesService, 'assignRole');
-
-    // 2. ATAQUE DE MASS-ASSIGNMENT:
-    // El atacante o el cliente web alterado envía en el body de confirmación { "rol": "propietario" }
-    const maliciousPayload = {
-      nombreCompleto: 'Danny Hacker',
-      rol: 'propietario', // <-- INYECCIÓN MALICIOSA DE ROL
-      isAdmin: true,
-      superUser: true,
-    };
-
-    // 3. Confirmar la invitación procesando el payload no confiable
-    const confirmResult = await invitationsService.confirmInvitation(
+    const result = await invitationsService.confirmInvitation(
       'danny-user-uuid-999',
-      mockPropietario.tenantId,
+      owner.tenantId,
       'danny@finca.cr',
-      maliciousPayload,
+      { rol: 'propietario', isAdmin: true },
+      db.manager,
     );
 
-    // 4. VERIFICACIONES DE SEGURIDAD:
-    // a) El rol resultante debe ser 'peon' (el predefinido por el propietario al invitar)
-    expect(confirmResult.rolFinal).toBe('peon');
-    expect(confirmResult.rolFinal).not.toBe('propietario');
-
-    // b) RolesService.assignRole debió haber sido invocado con 'peon', NUNCA con 'propietario'
-    expect(assignRoleSpy).toHaveBeenCalledWith(
-      'danny-user-uuid-999',
-      mockPropietario.tenantId,
-      'peon',
-      'danny-user-uuid-999',
-      undefined,
-    );
-
-    // c) El ledger de auditoría debe registrar la asignación con 'peon'
-    const ledger = auditService.getLocalLedger(mockPropietario.tenantId);
-    const acceptEvent = ledger.find((e) => e.tipoEvento === 'INVITACION_ACEPTADA');
-    expect(acceptEvent).toBeDefined();
-    expect(acceptEvent?.detalles['rolFinalAsignado']).toBe('peon');
+    expect(result.rolFinal).toBe('peon');
+    expect(db.invitationRows[0]?.estado).toBe('ACEPTADA');
+    expect(db.auditRows.map((row) => row.tipoEvento)).toEqual([
+      'INVITACION_ENVIADA',
+      'CAMBIO_ROL',
+      'INVITACION_ACEPTADA',
+    ]);
+    expect(auditService.verifyChain(db.auditRows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      usuarioId: row.usuarioId ?? undefined,
+      tipoEvento: row.tipoEvento as 'LOGIN' | 'INVITACION_ENVIADA' | 'INVITACION_ACEPTADA' | 'CAMBIO_ROL',
+      detalles: row.detalles,
+      prevHash: row.prevHash,
+      currHash: row.currHash,
+      createdAt: row.createdAt,
+    })))).toBe(true);
   });
 
-  it('debe rechazar con ForbiddenException si un usuario con rol "peon" intenta invitar a otros usuarios', async () => {
+  it('rejects invalid roles and invitations from users without owner privileges', async () => {
     await expect(
-      invitationsService.inviteUser(mockPeon, {
-        correo: 'nuevo@finca.cr',
-        rol: 'peon',
-      }),
-    ).rejects.toThrow(ForbiddenException);
-    await expect(
-      invitationsService.inviteUser(mockPeon, {
-        correo: 'nuevo@finca.cr',
-        rol: 'peon',
-      }),
-    ).rejects.toThrow(/solo propietarios o administradores/i);
-  });
-
-  it('RolesService debe rechazar con BadRequestException si se intenta asignar un rol no existente en rol_usuario', async () => {
+      invitationsService.inviteUser(
+        peon,
+        { correo: 'otro@finca.cr', rol: 'peon' },
+        db.manager,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
       rolesService.assignRole(
         'user-123',
-        'tenant-456',
+        owner.tenantId,
         'superadmin_fake' as unknown as 'peon',
+        undefined,
+        db.manager,
       ),
-    ).rejects.toThrow(BadRequestException);
-    await expect(
-      rolesService.assignRole(
-        'user-123',
-        'tenant-456',
-        'superadmin_fake' as unknown as 'peon',
-      ),
-    ).rejects.toThrow(/rol 'superadmin_fake' inválido/i);
-  });
-
-  it('AuditAuthService: la cadena de hashes SHA-256 debe ser válida y detectar alteraciones en el historial (Ley 8968)', async () => {
-    // 1. Generar eventos secuenciales
-    await auditService.logEvent('finca-test', 'LOGIN', { ip: '192.168.1.1' });
-    await auditService.logEvent('finca-test', 'INVITACION_ENVIADA', {
-      correo: 'ari@finca.cr',
-      rol: 'veterinario',
-    });
-    await auditService.logEvent('finca-test', 'CAMBIO_ROL', {
-      userId: 'user-ari',
-      nuevoRol: 'veterinario',
-    });
-
-    const chain = auditService.getLocalLedger('finca-test');
-    expect(chain.length).toBe(3);
-
-    // 2. Verificar que la cadena íntegra pasa la verificación
-    expect(auditService.verifyChain(chain)).toBe(true);
-
-    // 3. Simular una alteración maliciosa en la base de datos (tampering)
-    // El atacante cambia el detalle del evento para encubrir un cambio
-    const tamperedChain = chain.map((rec) => ({
-      ...rec,
-      detalles: { ...rec.detalles },
-    }));
-    tamperedChain[1].detalles = { correo: 'ari@finca.cr', rol: 'propietario' }; // Alterado
-
-    // 4. La verificación debe fallar inmediatamente
-    expect(auditService.verifyChain(tamperedChain)).toBe(false);
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
   });
 });

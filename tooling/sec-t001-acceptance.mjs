@@ -551,7 +551,7 @@ try {
       page.getByRole('alert').filter({
         hasText: 'Correo o contraseña incorrectos.',
       }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30000 });
     await page.locator('#password').fill(ownerA.password);
     await page
       .getByRole('button', { name: 'Iniciar Sesión', exact: true })

@@ -159,7 +159,7 @@ export class ReproductiveStateService {
         revertido: false,
         tipo: In(TIPOS_REPRODUCTIVOS),
       },
-      order: { fechaEvento: 'ASC', fechaRegistro: 'ASC' },
+      order: { fechaEvento: 'ASC', fechaRegistro: 'ASC', id: 'ASC' },
     });
 
     if (eventos.length === 0) return agrupado;
@@ -247,7 +247,7 @@ export class ReproductiveStateService {
 
     const eventos = await manager.find(Evento, {
       where: { animalId, tenantId, tipo: In(TIPOS_REPRODUCTIVOS) },
-      order: { fechaEvento: 'ASC', fechaRegistro: 'ASC' },
+      order: { fechaEvento: 'ASC', fechaRegistro: 'ASC', id: 'ASC' },
     });
 
     if (eventos.length === 0) return [];

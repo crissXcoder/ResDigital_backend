@@ -15,7 +15,7 @@ export class PesajesController {
   constructor(private readonly pesajesService: PesajesService) {}
 
   @Post()
-  @Roles('propietario', 'administrador')
+  @Roles('propietario', 'administrador', 'peon')
   create(
     @Body() createDto: CreatePesajeDto,
     @CurrentUser() user: AuthenticatedUser,

@@ -62,7 +62,14 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
     calculationService = new ReproductiveCalculationService();
     // Creamos mock ligero para stateService
     stateService = {
-      calcularEstado: vi.fn(),
+      calcularEstado: vi.fn(async () => ({
+        animalId: mockVacaA.id!,
+        areteInterno: '101',
+        sexo: 'Hembra',
+        estadoActual: 'Vacía' as const,
+        proximosHitos: [],
+        advertencias: [],
+      })),
       calcularEstadosBatch: vi.fn(async () => new Map()),
       derivarEstadoDesdeEventos: vi.fn(),
       obtenerHistorial: vi.fn(),
@@ -74,7 +81,8 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
     // RlsTransactionInterceptor, así que el manager efectivo es equivalente.
     mockEntityManager = {
       findOne: vi.fn(),
-      find: vi.fn(),
+      find: vi.fn().mockResolvedValue([]),
+      query: vi.fn().mockResolvedValue([]),
       create: vi.fn((entityClass, plain) => ({ ...plain })),
       save: vi.fn((entityClass, entity) =>
         Promise.resolve({ id: 'saved-uuid-1', ...entity }),
@@ -191,11 +199,45 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('rechaza un servicio adicional cuando el ciclo sigue Servida', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
+        animalId: mockVacaA.id!, areteInterno: '101', sexo: 'Hembra',
+        estadoActual: 'Servida', proximosHitos: [], advertencias: [],
+      });
+      await expect(service.registrarServicio(
+        mockVacaA.id!, tenantA, userId,
+        { fechaEvento: '2026-03-02', tipoServicio: 'Monta Natural', toroOPajilla: 'Toro 2' },
+        mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('no permite fechar un nuevo servicio antes del diagnóstico negativo que cerró el ciclo', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
+        animalId: mockVacaA.id!, areteInterno: '101', sexo: 'Hembra',
+        estadoActual: 'Vacía',
+        ultimoDiagnostico: {
+          eventoId: 'diagnostico-negativo', fecha: '2026-03-10', metodo: 'Palpación',
+          resultado: 'Vacía', eventoServicioId: 'servicio-anterior',
+        },
+        proximosHitos: [], advertencias: [],
+      });
+      await expect(service.registrarServicio(
+        mockVacaA.id!, tenantA, userId,
+        { fechaEvento: '2026-03-09', tipoServicio: 'Monta Natural', toroOPajilla: 'Toro 2' },
+        mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
     it('debe marcar el evento anterior como revertido = true cuando se envía eventoCorrigeId', async () => {
       const eventoPrevio: Partial<Evento> = {
         id: 'evento-previo-id',
         animalId: mockVacaA.id,
         tenantId: tenantA,
+        tipo: 'SERVICIO',
         revertido: false,
       };
 
@@ -231,11 +273,31 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
         tenantId: tenantA,
         tipo: 'SERVICIO',
         revertido: false,
+        fechaEvento: '2026-03-01',
       };
 
       vi.spyOn(mockEntityManager, 'findOne')
         .mockResolvedValueOnce(mockVacaA as Animal)
         .mockResolvedValueOnce(mockServicioEvento as Evento);
+      vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
+        animalId: mockVacaA.id!,
+        areteInterno: '101',
+        sexo: 'Hembra',
+        estadoActual: 'Servida',
+        servicioActivo: {
+          eventoId: mockServicioEvento.id!,
+          fechaServicio: '2026-03-01',
+          tipoServicio: 'Monta Natural',
+          toroOPajilla: 'Toro 1',
+          fpp: '2026-12-07',
+          palpacionFecha: '2026-04-10',
+          secadoFecha: '2026-10-08',
+          avisoPartoFecha: '2026-11-22',
+          avisoPartoUrgenteFecha: '2026-12-04',
+        },
+        proximosHitos: [],
+        advertencias: [],
+      });
 
       const dto = {
         fechaEvento: '2026-04-10',
@@ -280,6 +342,77 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
         ),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('rechaza una corrección de diagnóstico que intenta reemplazar un servicio', async () => {
+      const servicio = {
+        id: 'servicio-evento-id', animalId: mockVacaA.id, tenantId: tenantA,
+        tipo: 'SERVICIO', revertido: false, fechaEvento: '2026-03-01',
+      } as Evento;
+      vi.spyOn(mockEntityManager, 'findOne')
+        .mockResolvedValueOnce(mockVacaA as Animal)
+        .mockResolvedValueOnce(servicio)
+        .mockResolvedValueOnce(servicio);
+
+      await expect(service.registrarDiagnostico(
+        mockVacaA.id!, tenantA, userId,
+        {
+          fechaEvento: '2026-04-10', eventoServicioId: servicio.id,
+          eventoCorrigeId: servicio.id, metodo: 'Palpación', resultado: 'Preñada',
+        },
+        mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(servicio.revertido).toBe(false);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('rechaza un diagnóstico anterior al servicio sin guardar eventos', async () => {
+      const servicio = {
+        id: 'servicio-evento-id',
+        animalId: mockVacaA.id,
+        tenantId: tenantA,
+        tipo: 'SERVICIO',
+        revertido: false,
+        fechaEvento: '2026-03-01',
+      } as Evento;
+      vi.spyOn(mockEntityManager, 'findOne')
+        .mockResolvedValueOnce(mockVacaA as Animal)
+        .mockResolvedValueOnce(servicio);
+      vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
+        animalId: mockVacaA.id!, areteInterno: '101', sexo: 'Hembra',
+        estadoActual: 'Vacía', proximosHitos: [], advertencias: [],
+      });
+
+      await expect(service.registrarDiagnostico(
+        mockVacaA.id!, tenantA, userId,
+        { fechaEvento: '2026-02-28', eventoServicioId: servicio.id, metodo: 'Palpación', resultado: 'Preñada' },
+        mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('rechaza un diagnóstico que intenta reabrir un ciclo ya cerrado', async () => {
+      const servicio = {
+        id: 'servicio-evento-id', animalId: mockVacaA.id, tenantId: tenantA,
+        tipo: 'SERVICIO', revertido: false, fechaEvento: '2026-03-01',
+      } as Evento;
+      vi.spyOn(mockEntityManager, 'findOne')
+        .mockResolvedValueOnce(mockVacaA as Animal)
+        .mockResolvedValueOnce(servicio);
+      vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
+        animalId: mockVacaA.id!, areteInterno: '101', sexo: 'Hembra',
+        estadoActual: 'Vacía', proximosHitos: [], advertencias: [],
+      });
+
+      await expect(service.registrarDiagnostico(
+        mockVacaA.id!, tenantA, userId,
+        {
+          fechaEvento: '2026-04-10', eventoServicioId: servicio.id,
+          metodo: 'Palpación', resultado: 'Preñada',
+        },
+        mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('registrarParto y registrarSecado', () => {
@@ -290,6 +423,16 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
         areteInterno: '101',
         sexo: 'Hembra',
         estadoActual,
+        servicioActivo: {
+          eventoId: 'servicio-activo', fechaServicio: '2026-01-01',
+          tipoServicio: 'Inseminación Artificial', toroOPajilla: 'Toro 1',
+          fpp: '2026-10-09', palpacionFecha: '2026-02-10', secadoFecha: '2026-08-10',
+          avisoPartoFecha: '2026-09-24', avisoPartoUrgenteFecha: '2026-10-06',
+        },
+        ultimoDiagnostico: {
+          eventoId: 'diagnostico-activo', fecha: '2026-03-01', metodo: 'Palpación',
+          resultado: 'Preñada', eventoServicioId: 'servicio-activo',
+        },
         proximosHitos: [],
         advertencias: [],
       });
@@ -333,6 +476,15 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       );
 
       expect(result.evento.tipo).toBe('PARTO');
+    });
+
+    it('rechaza parto anterior al diagnóstico positivo activo', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      estadoPrenada();
+      await expect(service.registrarParto(
+        mockVacaA.id!, tenantA, userId, { fechaEvento: '2026-02-28' }, mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
     });
 
     it('CASO LÍMITE: rechaza con 400 un parto sobre un animal que no está preñado', async () => {
@@ -427,6 +579,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
         mockVacaA as Animal,
       );
+      estadoPrenada();
 
       const dto = {
         fechaEvento: '2026-10-08',
@@ -443,6 +596,15 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
 
       expect(result.evento.tipo).toBe('SECADO');
       expect(result.secado).toBeDefined();
+    });
+
+    it('rechaza secado anterior al diagnóstico positivo activo', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      estadoPrenada();
+      await expect(service.registrarSecado(
+        mockVacaA.id!, tenantA, userId, { fechaEvento: '2026-02-28' }, mockEntityManager,
+      )).rejects.toThrow(BadRequestException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
     });
   });
 

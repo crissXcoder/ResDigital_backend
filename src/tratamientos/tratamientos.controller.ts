@@ -16,7 +16,7 @@ export class TratamientosController {
   constructor(private readonly tratamientosService: TratamientosService) {}
 
   @Post()
-  @Roles('propietario', 'administrador', 'veterinario')
+  @Roles('propietario', 'administrador', 'peon', 'veterinario')
   create(
     @Body() createDto: CreateTratamientoDto,
     @CurrentUser() user: AuthenticatedUser,

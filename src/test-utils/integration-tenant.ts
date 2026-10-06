@@ -1,16 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { DataSource } from 'typeorm';
+import { execFileSync } from 'node:child_process';
+import { DataSource, type DataSourceOptions } from 'typeorm';
 
-/**
- * Utilidades para los tests de integración, que corren contra la base de datos
- * compartida del equipo.
- *
- * Dos reglas que no se negocian acá:
- *  1. Los tenants son aleatorios por corrida. Los UUID fijos hacían que dos
- *     specs distintos se pisaran entre sí.
- *  2. Todo DELETE lleva `WHERE` con el tenant y va parametrizado. Nunca se
- *     borra una tabla entera ni se interpola un id dentro del SQL.
- */
+/** Fixtures exclusivamente para PostgreSQL local descartable. */
 
 export interface TenantsDePrueba {
   tenantA: string;
@@ -21,21 +13,120 @@ export function crearTenantsDePrueba(): TenantsDePrueba {
   return { tenantA: randomUUID(), tenantB: randomUUID() };
 }
 
-/**
- * Lee los UUID de los usuarios de prueba del entorno.
- *
- * `evento.usuario_id` tiene FK contra `usuario`, que a su vez referencia
- * `auth.users` de Supabase, así que los tests no pueden inventarse un usuario:
- * tienen que apuntar a uno que exista de verdad en la base.
- */
+/** Usuarios aleatorios: el setup admin crea auth.users y usuario por tenant. */
 export function obtenerUsuariosDePrueba(): {
   usuarioA: string;
   usuarioB: string;
-} | null {
-  const usuarioA = process.env.TEST_USER_A_ID;
-  const usuarioB = process.env.TEST_USER_B_ID;
-  if (!usuarioA || !usuarioB) return null;
-  return { usuarioA, usuarioB };
+} {
+  return { usuarioA: randomUUID(), usuarioB: randomUUID() };
+}
+
+export function assertLocalIntegrationDatabase(
+  value: string | undefined,
+): string {
+  if (!value)
+    throw new Error('Falta la conexión PostgreSQL local de integración.');
+  const url = new URL(value);
+  if (
+    url.search ||
+    url.hash ||
+    !['postgres:', 'postgresql:'].includes(url.protocol) ||
+    !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+    !/^\/resdigital_test_[a-f0-9]+$/.test(url.pathname)
+  ) {
+    throw new Error(
+      'Integración requiere PostgreSQL local descartable resdigital_test_<id>.',
+    );
+  }
+  return value;
+}
+
+/** Verifica que Vitest solo pueda escribir en el contenedor creado por el runner de esta ejecución. */
+export function assertEphemeralDockerIntegrationDatabase(
+  runtimeUrl: string | undefined,
+  adminUrl: string | undefined,
+  containerName: string | undefined,
+  token: string | undefined,
+): void {
+  const runtime = new URL(assertLocalIntegrationDatabase(runtimeUrl));
+  const admin = new URL(assertLocalIntegrationDatabase(adminUrl));
+  if (
+    runtime.username !== 'resdigital_app' ||
+    admin.username === runtime.username ||
+    runtime.hostname !== '127.0.0.1' ||
+    admin.hostname !== runtime.hostname ||
+    runtime.port !== admin.port ||
+    runtime.pathname !== admin.pathname ||
+    !containerName?.startsWith('resdigital-integration-') ||
+    !/^[a-f0-9]{64}$/.test(token ?? '')
+  ) {
+    throw new Error(
+      'Usá pnpm test:integration para aprovisionar la BD Docker descartable.',
+    );
+  }
+
+  let container: Array<{
+    Config?: { Labels?: Record<string, string>; Image?: string };
+    State?: { Running?: boolean };
+    NetworkSettings?: {
+      Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
+    };
+  }>;
+  try {
+    container = JSON.parse(
+      execFileSync('docker', ['inspect', containerName], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    ) as typeof container;
+  } catch {
+    throw new Error(
+      'No se pudo verificar el contenedor PostgreSQL efímero de integración.',
+    );
+  }
+
+  const instance = container[0];
+  const publishedPort = instance?.NetworkSettings?.Ports?.['5432/tcp']?.[0];
+  if (
+    instance?.Config?.Labels?.['io.resdigital.integration-token'] !== token ||
+    instance.State?.Running !== true ||
+    publishedPort?.HostIp !== '127.0.0.1' ||
+    publishedPort.HostPort !== runtime.port
+  ) {
+    throw new Error(
+      'La base de integración no coincide con el contenedor Docker efímero verificado.',
+    );
+  }
+}
+
+export function crearAdminDataSource(
+  entities: DataSourceOptions['entities'] = [],
+): DataSource {
+  return new DataSource({
+    type: 'postgres',
+    url: assertLocalIntegrationDatabase(process.env.TEST_ADMIN_DATABASE_URL),
+    entities,
+    migrations: [],
+    synchronize: false,
+    ssl: false,
+  });
+}
+
+export async function insertarUsuario(
+  dataSource: DataSource,
+  tenantId: string,
+  userId: string,
+  rol = 'propietario',
+): Promise<void> {
+  const email = 'qa-' + userId + '@example.invalid';
+  await dataSource.query('INSERT INTO auth.users (id, email) VALUES ($1, $2)', [
+    userId,
+    email,
+  ]);
+  await dataSource.query(
+    'INSERT INTO usuario (id, tenant_id, nombre_completo, correo, rol) VALUES ($1, $2, $3, $4, $5)',
+    [userId, tenantId, 'QA Integración', email, rol],
+  );
 }
 
 export async function insertarTenant(
@@ -133,5 +224,9 @@ export async function limpiarTenants(
     ]);
   }
 
+  await dataSource.query(
+    'DELETE FROM auth.users WHERE id IN (SELECT id FROM usuario WHERE tenant_id = ANY($1))',
+    [tenantIds],
+  );
   await dataSource.query(`DELETE FROM tenant WHERE id = ANY($1);`, [tenantIds]);
 }
