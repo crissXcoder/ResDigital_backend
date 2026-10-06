@@ -5,6 +5,7 @@ import {
   CallHandler,
   OnModuleInit,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { isUUID } from 'class-validator';
 import { DataSource, type QueryRunner, type EntityManager } from 'typeorm';
@@ -28,6 +29,8 @@ export interface RequestWithRls extends Request {
 
 type AfterCommitCallback = () => Promise<void>;
 const AFTER_COMMIT_CALLBACKS_KEY = 'resdigitalAfterCommitCallbacks';
+const AFTER_ROLLBACK_CALLBACKS_KEY = 'resdigitalAfterRollbackCallbacks';
+const rollbackLogger = new Logger('RlsTransactionInterceptor');
 
 export function registerAfterCommitCallback(
   entityManager: EntityManager,
@@ -58,10 +61,55 @@ export async function runAfterCommitCallbacks(
   if (!queryRunner.data) return;
   const callbacks = queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
   delete queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
+  delete queryRunner.data[AFTER_ROLLBACK_CALLBACKS_KEY];
   if (!Array.isArray(callbacks)) return;
 
   for (const callback of callbacks as AfterCommitCallback[]) {
     await callback();
+  }
+}
+
+export function registerAfterRollbackCallback(
+  entityManager: EntityManager,
+  callback: AfterCommitCallback,
+): void {
+  const queryRunner = entityManager.queryRunner;
+  if (!queryRunner?.isTransactionActive) {
+    throw new Error(
+      'La acción posterior al rollback requiere una transacción activa.',
+    );
+  }
+
+  queryRunner.data ??= {};
+  const callbacks = queryRunner.data[AFTER_ROLLBACK_CALLBACKS_KEY];
+  if (callbacks === undefined) {
+    queryRunner.data[AFTER_ROLLBACK_CALLBACKS_KEY] = [callback];
+    return;
+  }
+  if (!Array.isArray(callbacks)) {
+    throw new Error('El registro de acciones posteriores al rollback es inválido.');
+  }
+  (callbacks as AfterCommitCallback[]).push(callback);
+}
+
+export async function runAfterRollbackCallbacks(
+  queryRunner: QueryRunner,
+): Promise<void> {
+  if (!queryRunner.data) return;
+  const callbacks = queryRunner.data[AFTER_ROLLBACK_CALLBACKS_KEY];
+  delete queryRunner.data[AFTER_ROLLBACK_CALLBACKS_KEY];
+  delete queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
+  if (!Array.isArray(callbacks)) return;
+
+  for (const callback of callbacks as AfterCommitCallback[]) {
+    try {
+      await callback();
+    } catch (error) {
+      rollbackLogger.error(
+        'No se pudo completar una compensación posterior al rollback.',
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 }
 
@@ -158,6 +206,7 @@ export class RlsTransactionInterceptor
     this.assertAuthenticatedContext(request.user);
 
     const queryRunner = this.dataSource.createQueryRunner();
+    let commitAttempted = false;
 
     return from(this.setupRlsSession(queryRunner, request.user)).pipe(
       switchMap(() => {
@@ -170,6 +219,7 @@ export class RlsTransactionInterceptor
       mergeMap(async (response) => {
         // Si el controlador completó con éxito, hacer commit de la transacción
         if (queryRunner.isTransactionActive) {
+          commitAttempted = true;
           await queryRunner.commitTransaction();
         }
         await runAfterCommitCallbacks(queryRunner);
@@ -179,7 +229,12 @@ export class RlsTransactionInterceptor
         // En caso de excepción en cualquier etapa del request, hacer rollback inmediato
         if (queryRunner.isTransactionActive) {
           return from(queryRunner.rollbackTransaction()).pipe(
-            switchMap(() => throwError(() => error)),
+            switchMap(async () => {
+              if (!commitAttempted) {
+                await runAfterRollbackCallbacks(queryRunner);
+              }
+              throw error;
+            }),
           );
         }
         return throwError(() => error);

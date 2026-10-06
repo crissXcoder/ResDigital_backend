@@ -2,18 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EntityManager } from 'typeorm';
 import { AnimalesService } from '../animales.service.js';
 import { Animal } from '../entities/animal.entity.js';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { DocumentoAnimal } from '../entities/documento-animal.entity.js';
+import { AnimalDocumentStorageService } from '../animal-document-storage.service.js';
+import { runAfterRollbackCallbacks } from '../../auth/interceptors/rls-transaction.interceptor.js';
 
 describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
   let service: AnimalesService;
   let mockEntityManager: EntityManager;
   let mockQueryBuilder: any;
+  let documentStorage: Pick<AnimalDocumentStorageService, 'validateObject' | 'removeObject'>;
 
   const TENANT_A = '11111111-1111-4111-8111-111111111111';
 
   beforeEach(() => {
-    service = new AnimalesService();
+    documentStorage = {
+      validateObject: vi.fn().mockResolvedValue(undefined),
+      removeObject: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new AnimalesService(documentStorage as AnimalDocumentStorageService);
 
     mockQueryBuilder = {
       leftJoinAndSelect: vi.fn().mockReturnThis(),
@@ -30,6 +37,8 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
       create: vi.fn(),
       save: vi.fn(),
       merge: vi.fn(),
+      query: vi.fn().mockResolvedValue([]),
+      queryRunner: { isTransactionActive: true, data: {} },
     } as unknown as EntityManager;
   });
 
@@ -125,6 +134,44 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
         archivoUrl: null,
       });
       expect(result).toMatchObject({ objectPath: validPath, archivoUrl: null });
+      expect(documentStorage.validateObject).toHaveBeenCalledWith(validPath);
+    });
+
+    it('does not register a path already referenced by another document row', async () => {
+      vi.mocked(mockEntityManager.query)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: DOCUMENT_ID }]);
+
+      await expect(
+        service.createDocumento(
+          ANIMAL_ID,
+          TENANT_A,
+          { tipo: 'Vacuna Aftosa', objectPath: validPath },
+          mockEntityManager,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(documentStorage.validateObject).not.toHaveBeenCalled();
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('removes the verified object after the document insert transaction rolls back', async () => {
+      vi.mocked(mockEntityManager.save).mockRejectedValueOnce(
+        new Error('simulated document insert failure'),
+      );
+
+      await expect(
+        service.createDocumento(
+          ANIMAL_ID,
+          TENANT_A,
+          { tipo: 'Vacuna Aftosa', objectPath: validPath },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow('simulated document insert failure');
+      expect(documentStorage.removeObject).not.toHaveBeenCalled();
+
+      const queryRunner = mockEntityManager.queryRunner!;
+      await runAfterRollbackCallbacks(queryRunner);
+      expect(documentStorage.removeObject).toHaveBeenCalledWith(validPath);
     });
 
     it('rejects a path for another animal with the same tenant', async () => {
@@ -140,6 +187,7 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(mockEntityManager.save).not.toHaveBeenCalled();
+      expect(documentStorage.validateObject).not.toHaveBeenCalled();
     });
 
     it('rejects a canonical path from another tenant', async () => {
@@ -154,6 +202,7 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(mockEntityManager.save).not.toHaveBeenCalled();
+      expect(documentStorage.validateObject).not.toHaveBeenCalled();
     });
 
     it('does not persist a path outside the canonical shape', async () => {
@@ -166,6 +215,7 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
         ),
       ).rejects.toThrow('La ruta del documento no es válida.');
       expect(mockEntityManager.save).not.toHaveBeenCalled();
+      expect(documentStorage.validateObject).not.toHaveBeenCalled();
     });
 
     it('does not create a document when the requested animal does not exist', async () => {
@@ -180,6 +230,7 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
         ),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(mockEntityManager.save).not.toHaveBeenCalled();
+      expect(documentStorage.validateObject).not.toHaveBeenCalled();
     });
   });
 });
