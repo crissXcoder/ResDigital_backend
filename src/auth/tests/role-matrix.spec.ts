@@ -5,6 +5,10 @@ import { PotrerosController } from '../../potreros/potreros.controller.js';
 import { PesajesController } from '../../pesajes/pesajes.controller.js';
 import { TratamientosController } from '../../tratamientos/tratamientos.controller.js';
 import { ReproductiveController } from '../../reproductivo/reproductive.controller.js';
+import { AnimalesController } from '../../animales/animales.controller.js';
+import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { RolesGuard } from '../guards/roles.guard.js';
 
 function rolesOf(controller: object, method: string): string[] | undefined {
   const handler = (controller as Record<string, unknown>)[method];
@@ -52,5 +56,28 @@ describe('Matriz de roles en rutas de escritura', () => {
     expect(rolesOf(ReproductiveController.prototype, 'registrarSecado')).toContain(
       'peon',
     );
+  });
+
+  it('reserva la carga de documentos al propietario y administrador', () => {
+    expect(rolesOf(AnimalesController.prototype, 'createDocumento')).toEqual([
+      'propietario',
+      'administrador',
+    ]);
+  });
+
+  it('deniega al peón la carga directa y permite al administrador', () => {
+    const guard = new RolesGuard(new Reflector());
+    const context = (rol: 'peon' | 'administrador') => ({
+      getHandler: () => AnimalesController.prototype.createDocumento,
+      getClass: () => AnimalesController,
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { userId: 'fixture-user', tenantId: 'fixture-tenant', rol },
+        }),
+      }),
+    }) as unknown as ExecutionContext;
+
+    expect(() => guard.canActivate(context('peon'))).toThrow(ForbiddenException);
+    expect(guard.canActivate(context('administrador'))).toBe(true);
   });
 });
