@@ -26,6 +26,45 @@ export interface RequestWithRls extends Request {
   entityManager?: EntityManager;
 }
 
+type AfterCommitCallback = () => Promise<void>;
+const AFTER_COMMIT_CALLBACKS_KEY = 'resdigitalAfterCommitCallbacks';
+
+export function registerAfterCommitCallback(
+  entityManager: EntityManager,
+  callback: AfterCommitCallback,
+): void {
+  const queryRunner = entityManager.queryRunner;
+  if (!queryRunner?.isTransactionActive) {
+    throw new Error(
+      'La acción posterior al commit requiere una transacción activa.',
+    );
+  }
+
+  queryRunner.data ??= {};
+  const callbacks = queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
+  if (callbacks === undefined) {
+    queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY] = [callback];
+    return;
+  }
+  if (!Array.isArray(callbacks)) {
+    throw new Error('El registro de acciones posteriores al commit es inválido.');
+  }
+  (callbacks as AfterCommitCallback[]).push(callback);
+}
+
+export async function runAfterCommitCallbacks(
+  queryRunner: QueryRunner,
+): Promise<void> {
+  if (!queryRunner.data) return;
+  const callbacks = queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
+  delete queryRunner.data[AFTER_COMMIT_CALLBACKS_KEY];
+  if (!Array.isArray(callbacks)) return;
+
+  for (const callback of callbacks as AfterCommitCallback[]) {
+    await callback();
+  }
+}
+
 /**
  * ==============================================================================
  * VALIDACIÓN DE SEGURIDAD OBLIGATORIA (Regla de Arquitectura y RLS):
@@ -133,6 +172,7 @@ export class RlsTransactionInterceptor
         if (queryRunner.isTransactionActive) {
           await queryRunner.commitTransaction();
         }
+        await runAfterCommitCallbacks(queryRunner);
         return response;
       }),
       catchError((error) => {

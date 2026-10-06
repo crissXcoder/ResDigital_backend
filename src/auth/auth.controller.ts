@@ -5,6 +5,7 @@ import {
   Body,
   Req,
   UnauthorizedException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { CurrentUser } from './decorators/current-user.decorator.js';
@@ -16,7 +17,10 @@ import type {
 } from './interfaces/authenticated-user.interface.js';
 import { InviteUserDto } from './dto/invite-user.dto.js';
 import { ConfirmInvitationDto } from './dto/confirm-invitation.dto.js';
-import { InvitationsService } from './services/invitations.service.js';
+import {
+  InvitationsService,
+  type InviteUserResult,
+} from './services/invitations.service.js';
 
 interface UsuarioRow {
   nombre_completo: string;
@@ -120,7 +124,12 @@ export class AuthController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: InviteUserDto,
     @Req() req: RequestWithRls,
-  ): Promise<{ success: boolean; invitacionId: string; rolAsignado: string }> {
+  ): Promise<InviteUserResult> {
+    if (!req.entityManager) {
+      throw new InternalServerErrorException(
+        'No se pudo iniciar la transacción de la invitación.',
+      );
+    }
     return this.invitationsService.inviteUser(user, dto, req.entityManager);
   }
 
@@ -135,6 +144,11 @@ export class AuthController {
     @Body() dto: ConfirmInvitationDto,
     @Req() req: RequestWithRls,
   ): Promise<{ success: boolean; userId: string; rolFinal: string }> {
+    if (!req.entityManager) {
+      throw new InternalServerErrorException(
+        'No se pudo iniciar la transacción de la invitación.',
+      );
+    }
     return this.invitationsService.confirmInvitation(
       user.userId,
       user.tenantId,
