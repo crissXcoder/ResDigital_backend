@@ -9,15 +9,22 @@ import { EventoDiagnostico } from '../entities/evento-diagnostico.entity.js';
 import { EventoParto } from '../entities/evento-parto.entity.js';
 import { EventoSecado } from '../entities/evento-secado.entity.js';
 import { Potrero } from '../../potreros/entities/potrero.entity.js';
+import {
+  crearTenantsDePrueba,
+  insertarTenants,
+  limpiarTenants,
+  obtenerUsuariosDePrueba,
+  crearAdminDataSource,
+  insertarUsuario,
+} from '../../test-utils/integration-tenant.js';
 
-describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supabase)', () => {
+describe('Test de Integración Real RLS — MOD-03 Reproductivo (PostgreSQL local descartable)', () => {
   let dataSource: DataSource;
+  let adminSource: DataSource;
 
-  // Tenants e IDs identificables para la prueba
-  const tenantA = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
-  const tenantB = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
-  const userTenantA = 'c2ddf521-f85a-4752-a9cd-803e4354cac8'; // Usuario real de la BD
-  const userTenantB = '66be99b7-1f4e-4f84-97b6-61558e4cb345'; // Usuario real de la BD
+  const { tenantA, tenantB } = crearTenantsDePrueba();
+  const { usuarioA: userTenantA, usuarioB: userTenantB } =
+    obtenerUsuariosDePrueba();
 
   let animalAId: string;
   let animalBId: string;
@@ -26,6 +33,7 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
   beforeAll(async () => {
     dataSource = new DataSource({
       ...dataSourceOptions,
+      migrations: [],
       entities: [
         CatalogoRaza,
         Animal,
@@ -38,15 +46,12 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
       ],
     });
     await dataSource.initialize();
+    adminSource = crearAdminDataSource(dataSource.options.entities);
+    await adminSource.initialize();
 
-    // 1. Crear tenants identificables para la prueba
-    await dataSource.query(`
-      INSERT INTO tenant (id, nombre_finca, created_at)
-      VALUES 
-        ('${tenantA}', 'TEST RLS Finca A', NOW()),
-        ('${tenantB}', 'TEST RLS Finca B', NOW())
-      ON CONFLICT (id) DO NOTHING;
-    `);
+    await insertarTenants(adminSource, { tenantA, tenantB });
+    await insertarUsuario(adminSource, tenantA, userTenantA);
+    await insertarUsuario(adminSource, tenantB, userTenantB);
 
     // 2. Obtener una raza válida
     const raza = await dataSource
@@ -59,7 +64,7 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
     }
 
     // 3. Crear animales identificables para cada tenant
-    const animalRepo = dataSource.getRepository(Animal);
+    const animalRepo = adminSource.getRepository(Animal);
     const animalA = await animalRepo.save({
       tenantId: tenantA,
       areteInterno: 'TEST-RLS-VACA-A',
@@ -85,20 +90,8 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
-      // Limpieza exhaustiva de datos de prueba identificables
-      if (eventoAId) {
-        await dataSource.query(
-          `DELETE FROM evento_servicio WHERE evento_id = $1`,
-          [eventoAId],
-        );
-        await dataSource.query(`DELETE FROM evento WHERE id = $1`, [eventoAId]);
-      }
-      await dataSource.query(
-        `DELETE FROM animal WHERE arete_interno IN ('TEST-RLS-VACA-A', 'TEST-RLS-VACA-B')`,
-      );
-      await dataSource.query(
-        `DELETE FROM tenant WHERE id IN ('${tenantA}', '${tenantB}')`,
-      );
+      await limpiarTenants(adminSource, [tenantA, tenantB]);
+      await adminSource.destroy();
       await dataSource.destroy();
     }
   });
@@ -146,7 +139,8 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
       });
       await queryRunnerA.query('SET LOCAL ROLE resdigital_app;');
       await queryRunnerA.query(
-        `SET LOCAL "request.jwt.claims" = '${claimsA}';`,
+        `SELECT set_config('request.jwt.claims', $1, true);`,
+        [claimsA],
       );
       await queryRunnerA.query(
         `SELECT set_config('app.current_tenant_id', $1, true);`,
@@ -201,7 +195,8 @@ describe('Test de Integración Real RLS — MOD-03 Reproductivo (Base Real Supab
       });
       await queryRunnerB.query('SET LOCAL ROLE resdigital_app;');
       await queryRunnerB.query(
-        `SET LOCAL "request.jwt.claims" = '${claimsB}';`,
+        `SELECT set_config('request.jwt.claims', $1, true);`,
+        [claimsB],
       );
       await queryRunnerB.query(
         `SELECT set_config('app.current_tenant_id', $1, true);`,

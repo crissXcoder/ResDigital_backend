@@ -7,7 +7,7 @@ import {
   Param,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { EntityManager } from 'typeorm';
 import { AnimalesService } from './animales.service.js';
 import { CurrentEntityManager } from '../auth/decorators/current-entity-manager.decorator.js';
@@ -19,6 +19,7 @@ import { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import { BajaAnimalDto } from './dto/baja-animal.dto.js';
 import { CreateDocumentoDto } from './dto/create-documento.dto.js';
 import { QueryAnimalDto } from './dto/query-animal.dto.js';
+import { DocumentoAnimalResponseDto } from './dto/documento-animal-response.dto.js';
 
 /**
  * Nota: los handlers reciben `@CurrentUser() user: AuthenticatedUser` en vez de
@@ -88,6 +89,9 @@ export class AnimalesController {
   }
 
   @Get(':id/documentos')
+  @ApiOperation({ summary: 'Listar los documentos privados de un animal' })
+  @ApiResponse({ status: 200, type: [DocumentoAnimalResponseDto] })
+  @ApiResponse({ status: 404, description: 'Animal no encontrado en esta finca' })
   getDocumentos(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -98,6 +102,12 @@ export class AnimalesController {
 
   @Post(':id/documentos')
   @Roles('propietario', 'administrador')
+  @ApiOperation({ summary: 'Registrar metadatos de un documento ya cargado' })
+  @ApiResponse({ status: 201, type: DocumentoAnimalResponseDto })
+  @ApiResponse({ status: 400, description: 'Ruta, categoría o archivo inválido' })
+  @ApiResponse({ status: 403, description: 'Rol o ruta de archivo no autorizados' })
+  @ApiResponse({ status: 404, description: 'Animal no encontrado en esta finca' })
+  @ApiResponse({ status: 409, description: 'El objeto ya está registrado' })
   createDocumento(
     @Param('id') id: string,
     @Body() docDto: CreateDocumentoDto,

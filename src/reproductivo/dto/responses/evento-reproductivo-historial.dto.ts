@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { FACILIDADES_PARTO } from '../../entities/evento-parto.entity.js';
 import type { EventoHistoricoReproductivo } from '../../services/reproductive-state.service.js';
 
@@ -13,7 +13,8 @@ export class DetalleServicioDto {
   @ApiProperty({ enum: ['Inseminación Artificial', 'Monta Natural'] })
   tipoServicio: string;
   @ApiProperty({ example: 'Titan (CRC-B-001)' }) toroOPajilla: string;
-  @ApiPropertyOptional({ nullable: true }) responsable?: string | null;
+  @ApiProperty({ type: 'string', nullable: true })
+  responsable: string | null;
   @ApiProperty({ example: '2026-06-24' }) fpp: string;
   @ApiProperty({ example: '2026-10-26' }) palpacionFecha: string;
   @ApiProperty({ example: '2026-04-25' }) secadoFecha: string;
@@ -28,11 +29,14 @@ export class DetalleDiagnosticoDto {
 }
 
 export class DetallePartoDto {
-  @ApiPropertyOptional({ nullable: true }) eventoServicioId?: string | null;
-  @ApiPropertyOptional({ nullable: true }) criaAnimalId?: string | null;
-  @ApiPropertyOptional({ enum: FACILIDADES_PARTO, nullable: true })
-  facilidadParto?: string | null;
-  @ApiPropertyOptional({ nullable: true }) observaciones?: string | null;
+  @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
+  eventoServicioId: string | null;
+  @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
+  criaAnimalId: string | null;
+  @ApiProperty({ type: 'string', enum: FACILIDADES_PARTO, nullable: true })
+  facilidadParto: string | null;
+  @ApiProperty({ type: 'string', nullable: true })
+  observaciones: string | null;
 }
 
 export class EventoReproductivoHistorialDto {
@@ -59,16 +63,18 @@ export class EventoReproductivoHistorialDto {
   })
   revertido: boolean;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
+    type: 'string',
+    format: 'uuid',
     nullable: true,
     description: 'Si este evento corrige a otro, el id del corregido.',
   })
-  eventoCorrigeId?: string | null;
+  eventoCorrigeId: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  notas?: string | null;
+  @ApiProperty({ type: 'string', nullable: true })
+  notas: string | null;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
       'Detalle propio del tipo de evento. SECADO no tiene detalle adicional, por eso puede venir nulo.',
     oneOf: [
@@ -76,8 +82,9 @@ export class EventoReproductivoHistorialDto {
       { $ref: '#/components/schemas/DetalleDiagnosticoDto' },
       { $ref: '#/components/schemas/DetallePartoDto' },
     ],
+    nullable: true,
   })
-  detalle?: DetalleServicioDto | DetalleDiagnosticoDto | DetallePartoDto | null;
+  detalle: DetalleServicioDto | DetalleDiagnosticoDto | DetallePartoDto | null;
 }
 
 /** Convierte el historial interno a la forma que se publica por HTTP. */

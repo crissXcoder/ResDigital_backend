@@ -54,7 +54,8 @@ export class ResumenServicioActivoDto {
   @ApiProperty({ example: '2026-09-16' }) fechaServicio: string;
   @ApiProperty({ example: 'Inseminación Artificial' }) tipoServicio: string;
   @ApiProperty({ example: 'Titan (CRC-B-001)' }) toroOPajilla: string;
-  @ApiPropertyOptional({ nullable: true }) responsable?: string | null;
+  @ApiProperty({ type: 'string', nullable: true })
+  responsable: string | null;
   @ApiProperty({
     example: '2026-06-24',
     description: 'Fecha probable de parto',
@@ -68,7 +69,8 @@ export class ResumenServicioActivoDto {
   avisoPartoFecha: string;
   @ApiProperty({ example: '2026-06-21', description: 'FPP - 3 días' })
   avisoPartoUrgenteFecha: string;
-  @ApiPropertyOptional({ nullable: true }) notas?: string | null;
+  @ApiProperty({ type: 'string', nullable: true })
+  notas: string | null;
 }
 
 export class ResumenDiagnosticoActivoDto {
@@ -82,9 +84,10 @@ export class ResumenDiagnosticoActivoDto {
 export class ResumenPartoActivoDto {
   @ApiProperty() eventoId: string;
   @ApiProperty({ example: '2026-06-22' }) fecha: string;
-  @ApiPropertyOptional({ nullable: true }) criaAnimalId?: string | null;
-  @ApiPropertyOptional({ enum: FACILIDADES_PARTO, nullable: true })
-  facilidadParto?: string | null;
+  @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
+  criaAnimalId: string | null;
+  @ApiProperty({ type: 'string', enum: FACILIDADES_PARTO, nullable: true })
+  facilidadParto: string | null;
 }
 
 export class ResumenSecadoActivoDto {
@@ -129,15 +132,15 @@ export class EstadoReproductivoResponseDto {
   @ApiPropertyOptional({ type: ResumenSecadoActivoDto })
   ultimoSecado?: ResumenSecadoActivoDto;
 
-  @ApiPropertyOptional({ type: [HitoReproductivoDto] })
-  proximosHitos?: HitoReproductivoDto[];
+  @ApiProperty({ type: [HitoReproductivoDto] })
+  proximosHitos: HitoReproductivoDto[];
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     type: [String],
     description:
       'Inconsistencias detectadas al derivar el estado, por ejemplo un evento sin su fila de detalle.',
   })
-  advertencias?: string[];
+  advertencias: string[];
 }
 
 export class ProximoEventoReproductivoDto {

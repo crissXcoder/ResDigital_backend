@@ -1,11 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
-import { lastValueFrom, of } from 'rxjs';
-import type { DataSource, QueryRunner } from 'typeorm';
+import { lastValueFrom, of, throwError } from 'rxjs';
+import type { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedUser } from '../interfaces/authenticated-user.interface.js';
 import {
   RlsTransactionInterceptor,
   type RequestWithRls,
+  registerAfterRollbackCallback,
 } from '../interceptors/rls-transaction.interceptor.js';
 
 const validIdentity = {
@@ -30,6 +31,7 @@ function createInterceptor(identity = validIdentity) {
     release: vi.fn().mockResolvedValue(undefined),
     isTransactionActive: true,
     isReleased: false,
+    data: {},
     manager: {},
   } as unknown as QueryRunner;
   const dataSource = {
@@ -112,5 +114,49 @@ describe('RlsTransactionInterceptor', () => {
       interceptor.intercept(context, { handle: () => of('unsafe') } as never),
     ).toThrow(ForbiddenException);
     expect(createQueryRunner).not.toHaveBeenCalled();
+  });
+
+  it('runs storage compensation only after transaction rollback', async () => {
+    const { interceptor, runner } = createInterceptor();
+    const { context } = createContext(authenticatedUser);
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    Object.assign(runner.manager, { queryRunner: runner });
+    const next = {
+      handle: () => {
+        registerAfterRollbackCallback(
+          (runner.manager as EntityManager),
+          cleanup,
+        );
+        return throwError(() => new Error('simulated handler failure'));
+      },
+    } as never;
+
+    await expect(
+      lastValueFrom(interceptor.intercept(context, next)),
+    ).rejects.toThrow('simulated handler failure');
+    expect(runner.rollbackTransaction).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the stored object when the commit outcome is ambiguous', async () => {
+    const { interceptor, runner } = createInterceptor();
+    const { context } = createContext(authenticatedUser);
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    Object.assign(runner.manager, { queryRunner: runner });
+    vi.mocked(runner.commitTransaction).mockRejectedValueOnce(
+      new Error('simulated connection loss during commit'),
+    );
+    const next = {
+      handle: () => {
+        registerAfterRollbackCallback(runner.manager as EntityManager, cleanup);
+        return of('response');
+      },
+    } as never;
+
+    await expect(
+      lastValueFrom(interceptor.intercept(context, next)),
+    ).rejects.toThrow('simulated connection loss during commit');
+    expect(runner.rollbackTransaction).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
   });
 });
