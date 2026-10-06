@@ -8,6 +8,9 @@ export default defineConfig({
   test: {
     globals: true,
     root: './',
-    include: ['**/*.spec.ts'],
+    // Solo unitarios. Los `*.integration.spec.ts` golpean la base compartida real
+    // y se ejecutan aparte con `pnpm test:integration` (vitest.config.integration.ts).
+    include: ['src/**/*.spec.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/*.integration.spec.ts'],
   },
 });

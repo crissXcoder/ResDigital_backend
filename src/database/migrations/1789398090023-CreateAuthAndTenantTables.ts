@@ -62,6 +62,7 @@ export class CreateAuthAndTenantTables1789398090023
     // 5. Políticas de aislamiento multi-tenant
     // Política para tenant: solo visible y modificable si su id coincide con el tenant_id del JWT
     await queryRunner.query(`
+      DROP POLICY IF EXISTS tenant_isolation_policy ON public.tenant;
       CREATE POLICY tenant_isolation_policy ON public.tenant
         FOR ALL
         TO authenticated
@@ -71,6 +72,7 @@ export class CreateAuthAndTenantTables1789398090023
 
     // Política para usuario: solo puede ver y modificar filas de su propio tenant_id
     await queryRunner.query(`
+      DROP POLICY IF EXISTS usuario_isolation_policy ON public.usuario;
       CREATE POLICY usuario_isolation_policy ON public.usuario
         FOR ALL
         TO authenticated
@@ -81,6 +83,7 @@ export class CreateAuthAndTenantTables1789398090023
     // Política para permitir que el servicio de autenticación (supabase_auth_admin)
     // consulte usuario durante la ejecución del Custom Access Token Hook
     await queryRunner.query(`
+      DROP POLICY IF EXISTS auth_admin_read_usuario_policy ON public.usuario;
       CREATE POLICY auth_admin_read_usuario_policy ON public.usuario
         AS PERMISSIVE
         FOR SELECT

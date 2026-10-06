@@ -1,0 +1,51 @@
+# Configuración de gitleaks para ResDigital.
+#
+# Existe porque el repositorio ya tuvo una fuga real: la contraseña de la base de
+# Supabase y la service_role key quedaron commiteadas en cuatro scripts sueltos
+# de la raíz. No había ninguna barrera automática que lo impidiera.
+
+title = "ResDigital - reglas de detección de secretos"
+
+[extend]
+# Parte del conjunto de reglas por defecto de gitleaks (AWS, GitHub, Stripe,
+# claves privadas, etc.) y se le suman las específicas del proyecto.
+useDefault = true
+
+[[rules]]
+id = "postgres-connection-string"
+description = "Cadena de conexión de PostgreSQL con credenciales embebidas"
+regex = '''postgres(?:ql)?:\/\/[^:\s'"]+:[^@\s'"]+@[^\s'"\/]+'''
+tags = ["database", "credentials"]
+
+[[rules]]
+id = "supabase-service-role-key"
+description = "JWT de Supabase con rol service_role (salta RLS y autenticación)"
+# El payload de un JWT de Supabase con service_role contiene "role":"service_role"
+# codificado en base64url. Se detecta el JWT y se valida por contexto.
+regex = '''eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}'''
+tags = ["supabase", "jwt"]
+
+[[rules]]
+id = "supabase-project-url"
+description = "URL de proyecto Supabase embebida en código fuente"
+regex = '''https:\/\/[a-z0-9]{20}\.supabase\.co'''
+tags = ["supabase"]
+
+[allowlist]
+description = "Rutas y valores que no son secretos reales"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''pnpm-lock\.yaml$''',
+  '''(^|\/)node_modules\/''',
+  '''(^|\/)dist\/''',
+  '''(^|\/)coverage\/''',
+  # Los runbooks describen el incidente y nombran los patrones, sin incluir
+  # ningún valor real.
+  '''docs\/runbooks\/''',
+]
+regexes = [
+  # Placeholders de .env.example
+  '''tu-supabase-[a-z-]+''',
+  '''usuario:contrasena@''',
+  '''db\.tu-proyecto\.supabase\.co''',
+]

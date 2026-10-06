@@ -1,0 +1,5 @@
+#!/bin/sh
+
+#!/bin/sh
+set -eu
+node tooling/security-tools.mjs gitleaks-protect

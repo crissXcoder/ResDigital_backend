@@ -23,6 +23,18 @@
 
 ## Description
 
+## Git y CI
+
+- `main` y `dev` reciben cambios por PR, con revisión de otro integrante, CODEOWNERS y todos los checks requeridos.
+- Node `24.14.x` y pnpm `10.32.1` son las versiones fijadas. No se añaden dependencias para estas barreras.
+- Husky usa el pre-commit para escanear el index con Gitleaks y bloquear si el scanner falta o falla; el auto-fix anterior de `lint-staged` ya no cambia archivos durante commit.
+- `pnpm git:setup-hooks` configura hooks solo en este clon; `pnpm git:workflows` valida YAML/actions con SHA. Los binarios se guardan dentro del directorio Git con SHA-256 verificado.
+- CI verifica PR, secretos, dependencias, lint, tipos, unit tests, build, replay de migraciones contra PostgreSQL descartable y workflows. Ningún job fallido/omitido pasa el check agregador.
+- Dependabot propone actualizaciones semanalmente sin auto-merge. Releases solo se borradorizan para tags en `main` con versión coincidente y CI aprobado.
+- CD queda pendiente hasta definir ambientes, secretos, aprobadores y rollback.
+
+Detalles y activación remota requieren el protocolo documentado en `00-Sistema/Git-y-Entrega.md` dentro de la bóveda ResDigital.
+
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
 ## Project setup

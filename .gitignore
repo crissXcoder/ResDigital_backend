@@ -12,6 +12,12 @@
 .env*
 !.env.example
 
+# Scripts sueltos en la raíz. Históricamente se usaron para tocar la base a mano
+# y terminaron con credenciales de producción en texto plano dentro del repo.
+# Todo script de base de datos va en src/database/scripts/ y lee del entorno.
+/*.cjs
+/*.mjs
+
 # Testing and coverage
 /coverage
 /test-results
