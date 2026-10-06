@@ -182,6 +182,13 @@ try {
       appliedMigrations.length +
       ' migraciones aplicadas; cero pendientes.',
   );
+  run(
+    [
+      resolve(root, 'tooling/export-openapi.mjs'),
+      '--sync-frontend',
+    ],
+    { ...env, DATABASE_URL: appUrl },
+  );
   const seed = spawnSync(
     'docker',
     [

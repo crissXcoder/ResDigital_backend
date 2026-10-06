@@ -168,6 +168,41 @@ try {
       `TypeORM no pudo verificar el estado final de migraciones: ${(verify.stderr ?? '').slice(-2000)}`,
     );
   process.stdout.write(verify.stdout);
+  const build = spawnSync(
+    process.execPath,
+    [resolve(root, 'node_modules/@nestjs/cli/bin/nest.js'), 'build'],
+    { cwd: root, env, stdio: 'inherit' },
+  );
+  if (build.status !== 0)
+    throw new Error('Nest no pudo compilar la aplicación para verificar OpenAPI.');
+  const appUrl = [
+    'postgresql://resdigital_app:',
+    appPassword,
+    '@127.0.0.1:',
+    port,
+    '/resdigital_ci',
+  ].join('');
+  const openapiCheck = spawnSync(
+    process.execPath,
+    [resolve(root, 'tooling/export-openapi.mjs'), '--check'],
+    {
+      cwd: root,
+      env: {
+        ...env,
+        DATABASE_URL: appUrl,
+        NODE_ENV: 'test',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
+        SUPABASE_SERVICE_ROLE_KEY: randomBytes(32).toString('hex'),
+        SUPABASE_ANON_KEY: randomBytes(32).toString('hex'),
+      },
+      encoding: 'utf8',
+    },
+  );
+  if (openapiCheck.status !== 0)
+    throw new Error(
+      `El contrato OpenAPI no coincide con los controladores: ${(openapiCheck.stderr ?? openapiCheck.stdout ?? '').slice(-2000)}`,
+    );
+  process.stdout.write(openapiCheck.stdout);
   const postgrestPort = docker([
     'run',
     '--detach',
