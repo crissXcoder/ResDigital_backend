@@ -84,8 +84,7 @@ describe('ReproductiveController (Controlador REST y Seguridad RBAC)', () => {
   });
 
   describe('CRITERIO 1: Seguridad RBAC (RolesGuard)', () => {
-    it('CRITERIO 1: Un peon autenticado recibe 403 al intentar POST /animales/:id/servicios', () => {
-      // El handler registrarServicio tiene @Roles('propietario', 'administrador', 'veterinario')
+    it('CRITERIO 1: Un peon autenticado puede registrar un servicio según la matriz de roles', () => {
       const rolesDecorados = reflector.get(
         'roles',
         controller.registrarServicio,
@@ -93,6 +92,7 @@ describe('ReproductiveController (Controlador REST y Seguridad RBAC)', () => {
       expect(rolesDecorados).toEqual([
         'propietario',
         'administrador',
+        'peon',
         'veterinario',
       ]);
 
@@ -100,15 +100,10 @@ describe('ReproductiveController (Controlador REST y Seguridad RBAC)', () => {
         mockPeon,
         controller.registrarServicio,
       );
-      expect(() => rolesGuard.canActivate(contextPeon)).toThrow(
-        ForbiddenException,
-      );
-      expect(() => rolesGuard.canActivate(contextPeon)).toThrow(
-        /se requiere uno de los roles/i,
-      );
+      expect(rolesGuard.canActivate(contextPeon)).toBe(true);
     });
 
-    it('Permite acceso a POST /animales/:id/servicios para roles autorizados (propietario, veterinario)', () => {
+    it('Permite acceso a POST /animales/:id/servicios para roles autorizados', () => {
       const contextProp = createMockContext(
         mockPropietario,
         controller.registrarServicio,

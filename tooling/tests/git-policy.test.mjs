@@ -1,9 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasOnlyFullShaPinnedActions, isForbiddenMigrationChange, validatePullRequest, validateTag } from '../git-policy.mjs';
+import { hasOnlyFullShaPinnedActions, isForbiddenMigrationChange, validatePullRequest, validateTag, requiredCheckName, requiredCheckPassed } from '../git-policy.mjs';
 import { resolveScanRange } from '../security-tools.mjs';
 const base = '1'.repeat(40);
 const head = '2'.repeat(40);
+
+test('release check follows package identity after repository renames', () => {
+  assert.equal(requiredCheckName('frontend'), 'Frontend required');
+  assert.equal(requiredCheckName('backend'), 'Backend required');
+  assert.throws(() => requiredCheckName('other'), /paquete/);
+});
+
+test('release refuses a spoofed check and a newer failed rerun', () => {
+  const success = { id: 10, name: 'Backend required', status: 'completed', conclusion: 'success', app: { id: 15368 } };
+  assert.equal(requiredCheckPassed([success], 'Backend required'), true);
+  assert.equal(requiredCheckPassed([{ ...success, app: { id: 1 } }], 'Backend required'), false);
+  assert.equal(requiredCheckPassed([success, { ...success, id: 11, conclusion: 'failure' }], 'Backend required'), false);
+  assert.equal(requiredCheckPassed([{ ...success, conclusion: 'skipped' }], 'Backend required'), false);
+  assert.equal(requiredCheckPassed([], 'Backend required'), false);
+});
 test('accepts an infrastructure PR with verifiable criteria', () => assert.deepEqual(validatePullRequest({ pull_request: { title: 'chore(ci): protect ResDigital branches', body: '## Tarea y objetivo\nInfraestructura: controles CI\n\n## Criterios de aceptación\n- El gate falla al faltar checks.' } }), []));
 test('rejects missing structure and task context', () => assert.equal(validatePullRequest({ pull_request: { title: 'Dev', body: 'Cambio' } }).length, 5));
 test('requires release tag to match manifest', () => assert.match(validateTag('v1.2.4', '1.2.3'), /package\.json/));

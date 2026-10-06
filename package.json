@@ -13,6 +13,9 @@
     "git:setup-hooks": "node tooling/install-hooks.mjs",
     "test:policy": "node --test tooling/tests/*.test.mjs",
     "migration:replay": "node tooling/migration-replay.mjs",
+    "openapi:generate": "pnpm build && node tooling/export-openapi.mjs --sync-frontend",
+    "openapi:check": "pnpm build && node tooling/export-openapi.mjs --check",
+    "security:verify": "pnpm build && node tooling/security-verify.mjs",
     "build": "nest build",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -25,7 +28,7 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:integration": "vitest run --config ./vitest.config.integration.ts",
+    "test:integration": "node tooling/integration-tests.mjs",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
     "typecheck": "tsc --noEmit",
     "typeorm": "tsx --env-file=.env node_modules/typeorm/cli.js --dataSource src/database/data-source.ts",
@@ -88,5 +91,10 @@
     "typescript": "^6.0.2",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.1.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "proxy-addr": "2.0.8"
+    }
   }
 }

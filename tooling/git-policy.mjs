@@ -26,6 +26,17 @@ export function validateTag(tag, version) {
   return tag === `v${version}` ? null : 'El tag debe coincidir con package.json.';
 }
 function git(args) { return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
+export function requiredCheckName(packageName) {
+  if (packageName === 'frontend') return 'Frontend required';
+  if (packageName === 'backend') return 'Backend required';
+  throw new Error('El paquete no tiene un check de release reconocido.');
+}
+export function requiredCheckPassed(checks, name) {
+  if (!Array.isArray(checks)) return false;
+  const trusted = checks.filter((check) => check?.name === name && check.app?.id === 15368 && Number.isSafeInteger(check.id));
+  const latest = trusted.reduce((result, check) => !result || check.id > result.id ? check : result, null);
+  return latest?.status === 'completed' && latest.conclusion === 'success';
+}
 function checkWorkflows() {
   const directory = resolve(root, '.github/workflows');
   const files = readdirSync(directory).filter((name) => /\.ya?ml$/.test(name));
@@ -57,9 +68,9 @@ function validateRelease() {
   git(['merge-base', '--is-ancestor', commit, 'origin/main']);
   const repository = process.env.GITHUB_REPOSITORY;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '')) throw new Error('GITHUB_REPOSITORY ausente o inválido.');
-  const checks = JSON.parse(execFileSync('gh', ['api', `repos/${repository}/commits/${commit}/check-runs`], { cwd: root, encoding: 'utf8' })).check_runs;
-  const name = repository.endsWith('/frontend') ? 'Frontend required' : 'Backend required';
-  if (!checks.some((check) => check.name === name && check.status === 'completed' && check.conclusion === 'success')) throw new Error(`Falta check exitoso ${name} en ${commit}.`);
+  const name = requiredCheckName(manifest.name);
+  const checks = JSON.parse(execFileSync('gh', ['api', `repos/${repository}/commits/${commit}/check-runs?check_name=${encodeURIComponent(name)}&filter=latest&per_page=100`], { cwd: root, encoding: 'utf8' })).check_runs;
+  if (!requiredCheckPassed(checks, name)) throw new Error(`Falta check exitoso ${name} en ${commit}.`);
 }
 function main() {
   try {

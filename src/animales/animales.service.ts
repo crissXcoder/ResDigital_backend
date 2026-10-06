@@ -2,18 +2,27 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
+import { AnimalDocumentStorageService } from './animal-document-storage.service.js';
+import { registerAfterRollbackCallback } from '../auth/interceptors/rls-transaction.interceptor.js';
 import { Animal } from './entities/animal.entity.js';
 import { DocumentoAnimal } from './entities/documento-animal.entity.js';
 import type { CreateAnimalDto } from './dto/create-animal.dto.js';
 import type { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import type { BajaAnimalDto } from './dto/baja-animal.dto.js';
-import type { CreateDocumentoDto } from './dto/create-documento.dto.js';
+import {
+  ANIMAL_DOCUMENT_OBJECT_PATH_REGEX,
+  type CreateDocumentoDto,
+} from './dto/create-documento.dto.js';
 import type { QueryAnimalDto } from './dto/query-animal.dto.js';
 
 @Injectable()
 export class AnimalesService {
+  constructor(private readonly documentStorage: AnimalDocumentStorageService) {}
+
   async findAll(
     tenantId: string,
     query: QueryAnimalDto,
@@ -249,11 +258,53 @@ export class AnimalesService {
     // Verificar que el animal existe y pertenece al tenant
     await this.findOne(animalId, tenantId, manager);
 
+    if (
+      typeof docDto.objectPath !== 'string' ||
+      !ANIMAL_DOCUMENT_OBJECT_PATH_REGEX.test(docDto.objectPath)
+    ) {
+      throw new BadRequestException('La ruta del documento no es válida.');
+    }
+
+    const [objectTenantId, objectAnimalId] = docDto.objectPath.split('/');
+    if (objectTenantId !== tenantId || objectAnimalId !== animalId) {
+      throw new ForbiddenException(
+        'La ruta del documento no corresponde a este animal.',
+      );
+    }
+
+    const category = docDto.tipo.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!docDto.tipo.trim() || category !== docDto.objectPath.split('/')[2]) {
+      throw new BadRequestException(
+        'La categoría del documento no coincide con la ruta del archivo.',
+      );
+    }
+
+    await manager.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0));',
+      [docDto.objectPath],
+    );
+    const existingDocument = await manager.query<{ id: string }[]>(
+      `SELECT id FROM public.documento_animal
+       WHERE tenant_id = $1 AND object_path = $2
+       LIMIT 1;`,
+      [tenantId, docDto.objectPath],
+    );
+    if (existingDocument.length > 0) {
+      throw new ConflictException('El documento ya está registrado.');
+    }
+
+    registerAfterRollbackCallback(manager, () =>
+      this.documentStorage.removeObject(docDto.objectPath),
+    );
+    await this.documentStorage.validateObject(docDto.objectPath);
+
     const doc = manager.create(DocumentoAnimal, {
       tenantId,
       animalId,
       tipo: docDto.tipo,
-      archivoUrl: docDto.archivoUrl,
+      objectPath: docDto.objectPath,
+      archivoUrl: null,
     });
 
     return manager.save(doc);

@@ -73,7 +73,7 @@ export class PotrerosController {
   }
 
   @Post(':id/asignar')
-  @Roles('propietario', 'administrador')
+  @Roles('propietario', 'administrador', 'peon')
   asignarAnimales(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,

@@ -19,12 +19,14 @@ if (process.env.DATABASE_URL)
   );
 const container = `resdigital-migrations-${randomUUID()}`;
 const postgrest = `resdigital-postgrest-${randomUUID()}`;
+const network = `resdigital-replay-${randomUUID()}`;
 const password = randomBytes(32).toString('hex');
 const appPassword = randomBytes(32).toString('hex');
 const apiPassword = randomBytes(32).toString('hex');
 const jwtSecret = randomBytes(32).toString('hex');
 let started = false;
 let postgrestStarted = false;
+let networkStarted = false;
 function docker(args) {
   return execFileSync('docker', args, {
     cwd: root,
@@ -33,10 +35,14 @@ function docker(args) {
   });
 }
 try {
+  docker(['network', 'create', network]);
+  networkStarted = true;
   docker([
     'run',
     '--detach',
     '--rm',
+    '--network',
+    network,
     '--name',
     container,
     '--publish',
@@ -162,10 +168,47 @@ try {
       `TypeORM no pudo verificar el estado final de migraciones: ${(verify.stderr ?? '').slice(-2000)}`,
     );
   process.stdout.write(verify.stdout);
+  const build = spawnSync(
+    process.execPath,
+    [resolve(root, 'node_modules/@nestjs/cli/bin/nest.js'), 'build'],
+    { cwd: root, env, stdio: 'inherit' },
+  );
+  if (build.status !== 0)
+    throw new Error('Nest no pudo compilar la aplicación para verificar OpenAPI.');
+  const appUrl = [
+    'postgresql://resdigital_app:',
+    appPassword,
+    '@127.0.0.1:',
+    port,
+    '/resdigital_ci',
+  ].join('');
+  const openapiCheck = spawnSync(
+    process.execPath,
+    [resolve(root, 'tooling/export-openapi.mjs'), '--check'],
+    {
+      cwd: root,
+      env: {
+        ...env,
+        DATABASE_URL: appUrl,
+        NODE_ENV: 'test',
+        SUPABASE_URL: 'http://127.0.0.1:54321',
+        SUPABASE_SERVICE_ROLE_KEY: randomBytes(32).toString('hex'),
+        SUPABASE_ANON_KEY: randomBytes(32).toString('hex'),
+      },
+      encoding: 'utf8',
+    },
+  );
+  if (openapiCheck.status !== 0)
+    throw new Error(
+      `El contrato OpenAPI no coincide con los controladores: ${(openapiCheck.stderr ?? openapiCheck.stdout ?? '').slice(-2000)}`,
+    );
+  process.stdout.write(openapiCheck.stdout);
   const postgrestPort = docker([
     'run',
     '--detach',
     '--rm',
+    '--network',
+    network,
     '--name',
     postgrest,
     '--publish',
@@ -174,8 +217,7 @@ try {
     [
       'PGRST_DB_URI=postgresql://authenticator:',
       apiPassword,
-      '@host.docker.internal:',
-      port,
+      `@${container}:5432`,
       '/resdigital_ci',
     ].join(''),
     '--env',
@@ -263,6 +305,11 @@ try {
     });
   if (started)
     execFileSync('docker', ['rm', '--force', container], {
+      cwd: root,
+      stdio: 'ignore',
+    });
+  if (networkStarted)
+    execFileSync('docker', ['network', 'rm', network], {
       cwd: root,
       stdio: 'ignore',
     });

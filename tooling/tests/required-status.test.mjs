@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { failedRequiredJobs } from '../required-status.mjs';
+import { failedRequiredJobs, isMergeEligibleAuthor } from '../required-status.mjs';
+
+test('merge eligibility permits only Cristhian, Karla and Ari as PR authors', () => {
+  assert.equal(isMergeEligibleAuthor('crissXcoder'), true);
+  assert.equal(isMergeEligibleAuthor('KarlaAnguloC'), true);
+  assert.equal(isMergeEligibleAuthor('AriiH08'), true);
+  assert.equal(isMergeEligibleAuthor('DannyOr94'), false);
+  assert.equal(isMergeEligibleAuthor('other-user'), false);
+});
 
 test('required status rejects failed, skipped, cancelled and missing jobs', () => {
   const jobs = {
