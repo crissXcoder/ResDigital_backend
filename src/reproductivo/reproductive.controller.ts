@@ -75,7 +75,7 @@ export class ReproductiveController {
   constructor(private readonly reproductiveService: ReproductiveService) {}
 
   @Post('animales/:id/servicios')
-  @Roles('propietario', 'administrador', 'veterinario')
+  @Roles('propietario', 'administrador', 'peon', 'veterinario')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Registrar servicio reproductivo para un animal hembra',
@@ -100,7 +100,7 @@ export class ReproductiveController {
   })
   @ApiResponse({
     status: 403,
-    description: 'El rol peón no puede registrar servicios',
+    description: 'El rol autenticado no está autorizado para registrar servicios',
   })
   @ApiResponse({
     status: 404,
@@ -163,7 +163,7 @@ export class ReproductiveController {
   }
 
   @Post('animales/:id/partos')
-  @Roles('propietario', 'administrador', 'veterinario')
+  @Roles('propietario', 'administrador', 'peon', 'veterinario')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Registrar parto',
@@ -183,7 +183,7 @@ export class ReproductiveController {
   })
   @ApiResponse({
     status: 403,
-    description: 'El rol peón no puede registrar partos',
+    description: 'El rol autenticado no está autorizado para registrar partos',
   })
   @ApiResponse({
     status: 404,
@@ -205,7 +205,7 @@ export class ReproductiveController {
   }
 
   @Post('animales/:id/secados')
-  @Roles('propietario', 'administrador', 'veterinario')
+  @Roles('propietario', 'administrador', 'peon', 'veterinario')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Registrar secado',

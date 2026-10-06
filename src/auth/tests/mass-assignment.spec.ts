@@ -28,6 +28,13 @@ describe('Seguridad y Defensa contra Mass-Assignment de Roles (Patrón Energisa)
     rawClaims: {},
   };
 
+  const mockAdministrador: AuthenticatedUser = {
+    ...mockPropietario,
+    userId: 'user-administrador-444',
+    rol: 'administrador',
+    email: 'administrador@finca.cr',
+  };
+
   beforeEach(() => {
     auditService = new AuditAuthService();
     rolesService = new RolesService(auditService);
@@ -107,7 +114,21 @@ describe('Seguridad y Defensa contra Mass-Assignment de Roles (Patrón Energisa)
         correo: 'nuevo@finca.cr',
         rol: 'peon',
       }),
-    ).rejects.toThrow(/solo propietarios o administradores/i);
+    ).rejects.toThrow(/solo el propietario/i);
+  });
+
+  it('debe rechazar invitaciones de administrador antes de crear o notificar', async () => {
+    const supabaseFetch = vi.spyOn(globalThis, 'fetch');
+
+    await expect(
+      invitationsService.inviteUser(mockAdministrador, {
+        correo: 'nuevo@finca.cr',
+        rol: 'peon',
+      }),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(supabaseFetch).not.toHaveBeenCalled();
+    expect(auditService.getLocalLedger(mockAdministrador.tenantId)).toEqual([]);
   });
 
   it('RolesService debe rechazar con BadRequestException si se intenta asignar un rol no existente en rol_usuario', async () => {

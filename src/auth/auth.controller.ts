@@ -111,11 +111,11 @@ export class AuthController {
 
   /**
    * POST /auth/invitar
-   * Solo accesible por Propietario o Administrador de la finca.
+   * Solo accesible por Propietario de la finca.
    * Envía invitación por correo fijando el rol predefinido.
    */
   @Post('invitar')
-  @Roles('propietario', 'administrador')
+  @Roles('propietario')
   async invitarUsuario(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: InviteUserDto,

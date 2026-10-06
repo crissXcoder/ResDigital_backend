@@ -49,10 +49,10 @@ export class InvitationsService {
     dto: InviteUserDto,
     entityManager?: EntityManager,
   ): Promise<{ success: boolean; invitacionId: string; rolAsignado: RolUsuario }> {
-    // 1. Validar que quien invita sea propietario o administrador
-    if (inviter.rol !== 'propietario' && inviter.rol !== 'administrador') {
+    // 1. Solo el propietario administra usuarios e invitaciones.
+    if (inviter.rol !== 'propietario') {
       throw new ForbiddenException(
-        'Solo propietarios o administradores tienen autorización para invitar usuarios a la finca.',
+        'Solo el propietario tiene autorización para invitar usuarios a la finca.',
       );
     }
 
