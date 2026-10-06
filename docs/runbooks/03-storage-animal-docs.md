@@ -1,149 +1,46 @@
-# Runbook 03 — Bucket de documentos `animal_docs`
+# Runbook 03 — documentos privados de animales
 
-**Estado:** parcialmente automatizado · **Responsable:** Cristhian, coordinado con quien toque el frontend
-**Riesgo:** este es el cambio con mayor radio de impacto de toda la remediación.
+**Estado al 2026-10-05:** SEC-T002 completada según sus criterios de aceptación. Los dos documentos existentes se migraron y el flujo Auth → API → Storage se verificó contra la base Supabase `ca-glass-solutions` con usuarios/tenant/animal efímeros `SEC-T002-AUTOTEST`, eliminados al terminar. Solo Supabase (base de datos) está desplegada; backend y frontend se ejecutaron localmente.
 
----
+## Contrato de almacenamiento
 
-## 1. Qué pasó
+Los objetos nuevos usan `<tenant_uuid>/<animal_uuid>/<categoria>/<documento_uuid>.<pdf|png|jpg>`. El cliente sube sin `upsert`, persiste `object_path` por la API NestJS y solicita enlaces firmados de 10 minutos para ver documentos. `archivo_url` queda nulo en los registros nuevos y migrados.
 
-Un script suelto, `fix-rls.mjs` (ya eliminado del repositorio), se ejecutó a mano contra
-la base y creó cuatro políticas sobre `storage.objects`:
+El backend exige que la ruta corresponda al tenant autenticado y al animal de la solicitud antes de persistirla. Storage RLS restringe SELECT/INSERT/DELETE al tenant del JWT y al patrón completo de ruta. No existe permiso UPDATE/upsert. La política no acredita por sí misma que el UUID de animal exista o pertenezca al tenant; ese control vive en el servicio NestJS.
 
-```sql
-CREATE POLICY "Allow public uploads animal_docs" ON storage.objects FOR INSERT TO public WITH CHECK (bucket_id = 'animal_docs');
-CREATE POLICY "Allow public read animal_docs"    ON storage.objects FOR SELECT TO public USING      (bucket_id = 'animal_docs');
-CREATE POLICY "Allow public update animal_docs"  ON storage.objects FOR UPDATE TO public USING      (bucket_id = 'animal_docs');
-CREATE POLICY "Allow public delete animal_docs"  ON storage.objects FOR DELETE TO public USING      (bucket_id = 'animal_docs');
-```
+## Estado remoto observado
 
-Dos problemas:
+- Bucket `animal_docs`: privado, límite 10 MiB y MIME PDF/PNG/JPEG (MCP, 2026-10-05).
+- Políticas activas: `animal_docs_select_tenant`, `animal_docs_insert_tenant`, `animal_docs_delete_tenant`, rol `authenticated`; no hay política UPDATE (consulta MCP `pg_policies`, 2026-10-05).
+- Dos documentos existentes se inspeccionaron por path, tamaño y MIME; ambas filas tenían `object_path` y `archivo_url=NULL` tras la migración.
+- La consola creó carpetas vacías durante una operación previa; no participan en el flujo y se conservan como observación.
 
-1. **`TO public`.** En PostgreSQL `public` incluye al rol `anon`, que es con el que
-   responde PostgREST usando la anon key. Esa clave es pública por diseño: va compilada
-   dentro del bundle del frontend.
-2. **Ningún filtro de tenant.** La única condición es `bucket_id = 'animal_docs'`.
+## Evidencia E2E (2026-10-05)
 
-Combinados: cualquiera con la anon key podía leer, sobrescribir y **borrar** los
-documentos de todas las fincas del sistema.
+- Se inició NestJS local en el puerto 3003 contra la BD remota configurada; validó el rol restringido de RLS en el arranque. No se ejecutaron migraciones ni seeds.
+- Se crearon dos cuentas Auth de prueba con registro confirmado, tenants aislados y nombres marcados `SEC-T002-AUTOTEST`. El trigger de registro generó sus perfiles; el Custom Access Token Hook emitió `tenant_id` y `rol` raíz.
+- Con la sesión real del propietario: `GET /auth/perfil` 200; `POST /animales` 201; carga canónica Storage 201; `POST /animales/:id/documentos` 201; listado 200; URL firmada descargó el mismo contenido PDF con HTTP 200.
+- Abuso: el tenant ajeno recibió 404 al listar y registrar en el animal; Storage rechazó la firma de su objeto con 404, anon recibió HTTP 400 y una ruta con categoría fuera del patrón recibió 403.
+- El script retiró objeto, documento, animal y cuentas temporales. La consulta final encontró dos tenants huérfanos creados por los intentos de setup fallidos; se borraron por UUID y nombre de prueba con guardia de ausencia de usuarios. La verificación final dio 0 tenants, usuarios, animales, documentos u objetos con marcadores SEC-T002.
+- En navegador local, visitar `/hato/{id}` sin sesión redirigió a `/login`. La UI autenticada no se recorrió; el E2E anterior ejercitó el mismo contrato por SDK/Auth real y API NestJS.
 
-Además, otro script (`check-buckets.mjs`, también eliminado) dejó el bucket marcado como
-`public: true`, así que los archivos son accesibles por URL directa sin ninguna sesión.
+## Historial de esquema
 
-Como todo esto se aplicó fuera de TypeORM, no quedó ni migración que lo revirtiera ni
-rastro en `public.migrations`: el estado vivía únicamente dentro de la base.
+El campo y las políticas se aplicaron vía Supabase MCP `apply_migration` en `ca-glass-solutions` el 2026-10-05 y se verificaron luego por lectura de esquema y `pg_policies`. La tabla de historial TypeORM no pudo consultarse con el rol de aplicación porque TypeORM intentó crearla en `public` y recibió `permission denied`; no se ejecutó `migration:run`. Esto no bloquea SEC-T002: Supabase registra sus migraciones y el backend/frontend no están desplegados. No ejecutar el historial TypeORM contra esta base sin una decisión operativa aparte.
 
-## 2. Lo que ya está resuelto por migración
+## Criterios SEC-T002
 
-`RevokeAnimalDocsPublicStoragePolicies1789740000005` elimina las cuatro políticas por su
-nombre exacto y crea una que exige sesión autenticada y acota por carpeta:
+- [x] Bucket privado y límite/MIME permitidos verificados en Supabase.
+- [x] Path tenant/animal/categoría/UUID implementado y ejercitado por carga real.
+- [x] `object_path` persistido y `archivo_url` nullable.
+- [x] URL anónima rechazada y URL firmada del propietario descarga el contenido.
+- [x] Dos objetos existentes migrados y sus referencias verificadas.
+- [x] Pruebas adversariales: tenant ajeno, anon y ruta inválida denegados.
+- [x] Actualizada ficha SEC-T002 y `Estado-Actual.md` de MOD-00.
 
-```sql
-CREATE POLICY "animal_docs_tenant_rw" ON storage.objects
-  FOR ALL TO authenticated
-  USING (bucket_id = 'animal_docs' AND (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id'))
-  WITH CHECK (bucket_id = 'animal_docs' AND (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id'));
-```
+## Observaciones fuera de los criterios SEC-T002
 
-La migración **no** cambia la bandera `public` del bucket. Ese paso es manual y está en la
-sección 4, porque rompe el frontend si se hace antes de tiempo.
-
-### Si la migración no tuvo privilegios
-
-`storage.objects` pertenece a `supabase_storage_admin`. Según con qué rol corran las
-migraciones, puede no haber permiso para alterarla. La migración está envuelta en un
-manejador de excepciones: no aborta, solo emite un `NOTICE`.
-
-Para comprobarlo:
-
-```sql
-SELECT policyname, roles, qual
-FROM pg_policies
-WHERE schemaname = 'storage' AND tablename = 'objects'
-  AND (policyname LIKE '%animal_docs%' OR policyname = 'animal_docs_tenant_rw');
-```
-
-Si siguen apareciendo las cuatro políticas `Allow public ...`, pegar este bloque en el
-**SQL Editor del Dashboard de Supabase**, que sí corre con privilegios suficientes:
-
-```sql
-DROP POLICY IF EXISTS "Allow public uploads animal_docs" ON storage.objects;
-DROP POLICY IF EXISTS "Allow public read animal_docs"    ON storage.objects;
-DROP POLICY IF EXISTS "Allow public update animal_docs"  ON storage.objects;
-DROP POLICY IF EXISTS "Allow public delete animal_docs"  ON storage.objects;
-
-DROP POLICY IF EXISTS "animal_docs_tenant_rw" ON storage.objects;
-CREATE POLICY "animal_docs_tenant_rw" ON storage.objects
-  FOR ALL TO authenticated
-  USING (
-    bucket_id = 'animal_docs'
-    AND (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
-  )
-  WITH CHECK (
-    bucket_id = 'animal_docs'
-    AND (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
-  );
-```
-
-## 3. Precondición sobre la convención de rutas
-
-La política nueva asume que los objetos se guardan como:
-
-```
-animal_docs/<tenant_id>/<lo-que-sea>.pdf
-```
-
-**Si el frontend no usa esa convención, las subidas van a empezar a fallar.** Antes de dar
-por cerrado este runbook hay que verificar cómo se construye el `path` en el `upload()`
-del frontend y, si hace falta, anteponerle el `tenant_id`.
-
-Los archivos que ya estén guardados con otra estructura de carpetas dejarán de ser
-accesibles para sus propias fincas y habrá que moverlos.
-
-## 4. Pasar el bucket a privado (paso manual, coordinado)
-
-> ⚠️ Con el bucket público, `getPublicUrl()` devuelve una URL que funciona sin sesión.
-> Al pasarlo a privado esas URLs devuelven 400 y **todos los documentos dejan de verse en
-> la aplicación**. Este es el cambio de mayor radio de impacto del plan.
-
-Orden obligatorio:
-
-1. **Primero el frontend.** Migrar de `getPublicUrl()` a `createSignedUrl(path, expiresIn)`.
-   Buscar todos los usos:
-
-   ```bash
-   cd ../frontend && grep -rn "getPublicUrl\|animal_docs" --include="*.ts" --include="*.tsx" .
-   ```
-
-2. **Desplegar el frontend** y confirmar que los documentos se siguen viendo con el bucket
-   todavía público (las URLs firmadas funcionan igual sobre un bucket público).
-
-3. **Recién entonces**, en el Dashboard: **Storage → animal_docs → Settings** y desmarcar
-   *Public bucket*.
-
-4. Verificar: subir un documento, verlo, y comprobar que pegar la URL directa en una
-   ventana de incógnito ya no funciona.
-
-## 5. Verificación final
-
-```sql
--- No debe quedar ninguna política sobre animal_docs concedida a `public`.
-SELECT policyname, roles
-FROM pg_policies
-WHERE schemaname = 'storage' AND tablename = 'objects';
-
--- El bucket no debe estar marcado como público.
-SELECT id, name, public FROM storage.buckets WHERE name = 'animal_docs';
-```
-
----
-
-## Checklist
-
-- [ ] Las cuatro políticas `Allow public ... animal_docs` ya no existen
-- [ ] Existe `animal_docs_tenant_rw`, `TO authenticated`, con filtro de carpeta por tenant
-- [ ] Verificada la convención de rutas `<tenant_id>/<archivo>` en las subidas del frontend
-- [ ] Archivos existentes migrados a esa estructura, si hacía falta
-- [ ] Frontend migrado a `createSignedUrl()` y desplegado
-- [ ] Bucket pasado a privado
-- [ ] Documentos visibles dentro de la aplicación y no accesibles por URL directa
+- El flujo de documentos Auth → API → Storage se probó con sesiones reales; la UI autenticada no se recorrió visualmente. La autenticación redirige a `/login` si falta sesión.
+- TypeORM `migration:show` intentó crear la tabla de historial en `public` y recibió `permission denied`; no se aplicó esa operación ni `migration:run`. La migración del esquema fue aplicada vía Supabase MCP y verificada directamente. Backend y frontend no están desplegados.
+- Frontend TypeScript/ESLint no se pudo repetir en esta ejecución (dependencias locales faltantes/invocación Windows); una ejecución previa registrada había pasado pruebas focalizadas. TypeScript backend pasó.
+- `.emptyFolderPlaceholder` vacíos creados durante la operación anterior siguen presentes; no intervienen en la lectura ni escritura de documentos.

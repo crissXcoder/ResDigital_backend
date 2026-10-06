@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { Animal } from './entities/animal.entity.js';
@@ -9,7 +11,10 @@ import { DocumentoAnimal } from './entities/documento-animal.entity.js';
 import type { CreateAnimalDto } from './dto/create-animal.dto.js';
 import type { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import type { BajaAnimalDto } from './dto/baja-animal.dto.js';
-import type { CreateDocumentoDto } from './dto/create-documento.dto.js';
+import {
+  ANIMAL_DOCUMENT_OBJECT_PATH_REGEX,
+  type CreateDocumentoDto,
+} from './dto/create-documento.dto.js';
 import type { QueryAnimalDto } from './dto/query-animal.dto.js';
 
 @Injectable()
@@ -171,11 +176,26 @@ export class AnimalesService {
     // Verificar que el animal existe y pertenece al tenant
     await this.findOne(animalId, tenantId, manager);
 
+    if (
+      typeof docDto.objectPath !== 'string' ||
+      !ANIMAL_DOCUMENT_OBJECT_PATH_REGEX.test(docDto.objectPath)
+    ) {
+      throw new BadRequestException('La ruta del documento no es válida.');
+    }
+
+    const [objectTenantId, objectAnimalId] = docDto.objectPath.split('/');
+    if (objectTenantId !== tenantId || objectAnimalId !== animalId) {
+      throw new ForbiddenException(
+        'La ruta del documento no corresponde a este animal.',
+      );
+    }
+
     const doc = manager.create(DocumentoAnimal, {
       tenantId,
       animalId,
       tipo: docDto.tipo,
-      archivoUrl: docDto.archivoUrl,
+      objectPath: docDto.objectPath,
+      archivoUrl: null,
     });
 
     return manager.save(doc);
