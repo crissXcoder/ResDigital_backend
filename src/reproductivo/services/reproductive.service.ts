@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { Animal } from '../../animales/entities/animal.entity.js';
-import { Evento } from '../../eventos/entities/evento.entity.js';
+import { Evento, type TipoEvento } from '../../eventos/entities/evento.entity.js';
 import { EventoServicio } from '../entities/evento-servicio.entity.js';
 import { EventoDiagnostico } from '../entities/evento-diagnostico.entity.js';
 import { EventoParto } from '../entities/evento-parto.entity.js';
@@ -128,12 +128,39 @@ export class ReproductiveService {
     // posterior dejaba el evento original revertido y sin reemplazo: la vaca
     // perdía su ciclo.
     return manager.transaction(async (trx) => {
+      await this.lockAnimalForReproductiveWrite(animalId, trx);
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
         tenantId,
+        'SERVICIO',
         trx,
       );
+
+      const estado = await this.stateService.calcularEstado(
+        animalId,
+        tenantId,
+        trx,
+      );
+      if (estado.estadoActual !== 'Vacía') {
+        throw new BadRequestException(
+          `No se puede registrar un nuevo servicio: el animal está en estado '${estado.estadoActual}'. Primero debe volver a 'Vacía' mediante un diagnóstico negativo, un parto o una corrección válida.`,
+        );
+      }
+      const cierreVigente = [
+        estado.ultimoDiagnostico?.resultado === 'Vacía'
+          ? estado.ultimoDiagnostico.fecha
+          : undefined,
+        estado.ultimoParto?.fecha,
+      ].filter((date): date is string => Boolean(date)).sort().at(-1);
+      if (cierreVigente) {
+        this.validarCronologia(
+          dto.fechaEvento,
+          cierreVigente,
+          'servicio',
+          'cierre del ciclo anterior',
+        );
+      }
 
       const evento = await trx.save(
         Evento,
@@ -186,30 +213,65 @@ export class ReproductiveService {
       'diagnósticos reproductivos',
     );
 
-    // El servicio al que apunta tiene que existir, ser de este animal, de esta
-    // finca, y ser efectivamente un SERVICIO.
-    const servicioEvento = await manager.findOne(Evento, {
-      where: {
-        id: dto.eventoServicioId,
-        animalId,
-        tenantId,
-        tipo: 'SERVICIO',
-        revertido: false,
-      },
-    });
-    if (!servicioEvento) {
-      throw new NotFoundException(
-        `El evento de servicio con ID '${dto.eventoServicioId}' no existe o no corresponde a este animal.`,
-      );
-    }
-
     return manager.transaction(async (trx) => {
+      await this.lockAnimalForReproductiveWrite(animalId, trx);
+      // Leer la referencia dentro del mismo bloqueo serializado que las escrituras.
+      const servicioEvento = await trx.findOne(Evento, {
+        where: {
+          id: dto.eventoServicioId,
+          animalId,
+          tenantId,
+          tipo: 'SERVICIO',
+          revertido: false,
+        },
+      });
+      if (!servicioEvento) {
+        throw new NotFoundException(
+          `El evento de servicio con ID '${dto.eventoServicioId}' no existe o no corresponde a este animal.`,
+        );
+      }
+      this.validarCronologia(dto.fechaEvento, servicioEvento.fechaEvento, 'diagnóstico', 'servicio');
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
         tenantId,
+        'DIAGNOSTICO',
         trx,
       );
+
+      const estado = await this.stateService.calcularEstado(
+        animalId,
+        tenantId,
+        trx,
+      );
+      if (estado.servicioActivo?.eventoId !== servicioEvento.id) {
+        throw new BadRequestException(
+          'No se puede registrar el diagnóstico porque el servicio ya no pertenece al ciclo reproductivo activo.',
+        );
+      }
+
+      const secadosVigentes = await trx.find(Evento, {
+        where: {
+          animalId,
+          tenantId,
+          tipo: 'SECADO',
+          revertido: false,
+        },
+      });
+      const secadosDelCiclo = secadosVigentes.filter((secado) =>
+        this.ocurreDespuesEnHistorial(secado, servicioEvento),
+      );
+      if (
+        secadosDelCiclo.length > 0 &&
+        (dto.resultado !== 'Preñada' ||
+          secadosDelCiclo.some(
+            (secado) => dto.fechaEvento >= secado.fechaEvento,
+          ))
+      ) {
+        throw new BadRequestException(
+          'La corrección del diagnóstico debe conservar la preñez confirmada antes del secado activo.',
+        );
+      }
 
       const evento = await trx.save(
         Evento,
@@ -252,14 +314,6 @@ export class ReproductiveService {
   ): Promise<{ evento: Evento; parto: EventoParto }> {
     await this.obtenerHembra(animalId, tenantId, manager, 'partos');
 
-    // El servicio al que se asocia el parto se valida igual que en el
-    // diagnóstico. Antes se guardaba el id tal cual, sin comprobar nada.
-    //
-    // Por qué importa: la FK de `evento_parto.evento_servicio_id` apunta a
-    // `evento(id)`, y en PostgreSQL las comprobaciones de integridad
-    // referencial se ejecutan con los privilegios del dueño de la tabla y NO
-    // aplican RLS. Es decir, un id de OTRA finca pasaba la FK sin problema y
-    // quedaba persistido, creando un enlace cruzado entre tenants.
     if (dto.eventoServicioId) {
       const servicioEvento = await manager.findOne(Evento, {
         where: {
@@ -294,6 +348,7 @@ export class ReproductiveService {
     }
 
     return manager.transaction(async (trx) => {
+      await this.lockAnimalForReproductiveWrite(animalId, trx);
       // El orden importa: primero se revierte el evento que esta corrección
       // reemplaza, y recién después se calcula el estado. Si se calculara antes,
       // una corrección chocaría contra el propio estado que viene a corregir.
@@ -301,6 +356,7 @@ export class ReproductiveService {
         dto.eventoCorrigeId,
         animalId,
         tenantId,
+        'PARTO',
         trx,
       );
 
@@ -314,6 +370,26 @@ export class ReproductiveService {
           `No se puede registrar un parto: el animal está en estado '${estado.estadoActual}'. ` +
             `Un parto se registra sobre una preñez confirmada (estado 'Preñada' o 'En Secado'). ` +
             `Si la preñez existe pero no está registrada, primero anotá el diagnóstico de gestación.`,
+        );
+      }
+
+      const servicioActivo = estado.servicioActivo;
+      const diagnosticoActivo = estado.ultimoDiagnostico;
+      if (
+        !servicioActivo ||
+        !diagnosticoActivo ||
+        diagnosticoActivo.resultado !== 'Preñada' ||
+        diagnosticoActivo.eventoServicioId !== servicioActivo.eventoId
+      ) {
+        throw new BadRequestException(
+          'No se puede registrar el parto sin un servicio activo y un diagnóstico positivo vinculado a ese servicio.',
+        );
+      }
+      this.validarCronologia(dto.fechaEvento, servicioActivo.fechaServicio, 'parto', 'servicio');
+      this.validarCronologia(dto.fechaEvento, diagnosticoActivo.fecha, 'parto', 'diagnóstico positivo');
+      if (dto.eventoServicioId && dto.eventoServicioId !== servicioActivo.eventoId) {
+        throw new BadRequestException(
+          'El servicio asociado al parto debe coincidir con el ciclo reproductivo activo.',
         );
       }
 
@@ -360,12 +436,35 @@ export class ReproductiveService {
     await this.obtenerHembra(animalId, tenantId, manager, 'periodo de secado');
 
     return manager.transaction(async (trx) => {
+      await this.lockAnimalForReproductiveWrite(animalId, trx);
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
         tenantId,
+        'SECADO',
         trx,
       );
+
+      const estado = await this.stateService.calcularEstado(
+        animalId,
+        tenantId,
+        trx,
+      );
+      const servicioActivo = estado.servicioActivo;
+      const diagnosticoActivo = estado.ultimoDiagnostico;
+      if (
+        estado.estadoActual !== 'Preñada' ||
+        !servicioActivo ||
+        !diagnosticoActivo ||
+        diagnosticoActivo.resultado !== 'Preñada' ||
+        diagnosticoActivo.eventoServicioId !== servicioActivo.eventoId
+      ) {
+        throw new BadRequestException(
+          `No se puede registrar el secado: requiere una preñez confirmada vinculada al servicio activo. El estado actual es '${estado.estadoActual}'.`,
+        );
+      }
+      this.validarCronologia(dto.fechaEvento, servicioActivo.fechaServicio, 'secado', 'servicio');
+      this.validarCronologia(dto.fechaEvento, diagnosticoActivo.fecha, 'secado', 'diagnóstico positivo');
 
       const evento = await trx.save(
         Evento,
@@ -497,6 +596,41 @@ export class ReproductiveService {
     return animal;
   }
 
+  private async lockAnimalForReproductiveWrite(
+    animalId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0));',
+      [`reproductive-animal:${animalId}`],
+    );
+  }
+
+  private validarCronologia(
+    eventDate: string,
+    referenceDate: string,
+    eventName: string,
+    referenceName: string,
+  ): void {
+    if (eventDate < referenceDate) {
+      throw new BadRequestException(
+        `La fecha del ${eventName} no puede ser anterior a la fecha del ${referenceName} (${referenceDate}).`,
+      );
+    }
+  }
+
+  private ocurreDespuesEnHistorial(evento: Evento, referencia: Evento): boolean {
+    if (evento.fechaEvento !== referencia.fechaEvento) {
+      return evento.fechaEvento > referencia.fechaEvento;
+    }
+    const registroEvento = new Date(evento.fechaRegistro).getTime();
+    const registroReferencia = new Date(referencia.fechaRegistro).getTime();
+    if (registroEvento !== registroReferencia) {
+      return registroEvento > registroReferencia;
+    }
+    return evento.id.localeCompare(referencia.id) > 0;
+  }
+
   /**
    * Marca como revertido el evento que una corrección reemplaza.
    *
@@ -511,6 +645,7 @@ export class ReproductiveService {
     eventoCorrigeId: string | undefined,
     animalId: string,
     tenantId: string,
+    tipoEsperado: Extract<TipoEvento, 'SERVICIO' | 'DIAGNOSTICO' | 'PARTO' | 'SECADO'>,
     manager: EntityManager,
   ): Promise<void> {
     if (!eventoCorrigeId) return;
@@ -522,6 +657,17 @@ export class ReproductiveService {
     if (!previo) {
       throw new NotFoundException(
         `El evento con ID '${eventoCorrigeId}' a corregir no existe o no pertenece a este animal.`,
+      );
+    }
+
+    if (previo.tipo !== tipoEsperado) {
+      throw new BadRequestException(
+        `Una corrección de tipo '${tipoEsperado}' solo puede reemplazar un evento del mismo tipo.`,
+      );
+    }
+    if (previo.revertido) {
+      throw new BadRequestException(
+        'No se puede corregir un evento que ya fue reemplazado por otra corrección.',
       );
     }
 

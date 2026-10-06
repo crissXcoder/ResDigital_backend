@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { DataSource, IsNull } from 'typeorm';
 import { Test } from '@nestjs/testing';
-import { type INestApplication, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, type INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../../app.module.js';
 import { SupabaseJwtService } from '../../auth/services/supabase-jwt.service.js';
@@ -42,6 +43,8 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
   const userId = usuarios.usuarioA;
 
   let animalId: string;
+  let concurrencyAnimalId: string;
+  let fechaCierreCiclo: string;
 
   beforeAll(async () => {
     dataSource = new DataSource({
@@ -97,6 +100,16 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       activo: true,
     });
     animalId = animal.id;
+    const concurrencyAnimal = await animalRepo.save({
+      tenantId,
+      areteInterno: 'TEST-E2E-VACA-CONCURRENCY',
+      nombre: 'Vaca Concurrencia E2E',
+      sexo: 'Hembra',
+      razaId: raza.id,
+      categoria: 'Vaca',
+      activo: true,
+    });
+    concurrencyAnimalId = concurrencyAnimal.id;
     const moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -161,6 +174,94 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
     expect(count).toBe(0);
   });
 
+  it('serializa dos correcciones concurrentes del mismo evento', async () => {
+    const conTransaccionDeTenant = async <T>(
+      ejecutar: (manager: DataSource['manager']) => Promise<T>,
+    ): Promise<T> => {
+      const queryRunner = dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      try {
+        const claims = JSON.stringify({
+          sub: userId,
+          tenant_id: tenantId,
+          rol: 'propietario',
+        });
+        await queryRunner.query('SET LOCAL ROLE resdigital_app;');
+        await queryRunner.query(
+          `SELECT set_config('request.jwt.claims', $1, true);`,
+          [claims],
+        );
+        await queryRunner.query(
+          `SELECT set_config('app.current_tenant_id', $1, true);`,
+          [tenantId],
+        );
+        const result = await ejecutar(queryRunner.manager);
+        await queryRunner.commitTransaction();
+        return result;
+      } catch (error) {
+        if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction();
+        throw error;
+      } finally {
+        await queryRunner.release();
+      }
+    };
+
+    const original = await conTransaccionDeTenant((manager) =>
+      reproService.registrarServicio(
+        concurrencyAnimalId,
+        tenantId,
+        userId,
+        {
+          fechaEvento: '2025-01-01',
+          tipoServicio: 'Monta Natural',
+          toroOPajilla: 'Concurrente original',
+        },
+        manager,
+      ),
+    );
+    const corregir = (toroOPajilla: string) =>
+      conTransaccionDeTenant((manager) =>
+        reproService.registrarServicio(
+          concurrencyAnimalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: '2025-01-02',
+            tipoServicio: 'Monta Natural',
+            toroOPajilla,
+            eventoCorrigeId: original.evento.id,
+          },
+          manager,
+        ),
+      );
+
+    const resultados = await Promise.allSettled([
+      corregir('Corrección concurrente A'),
+      corregir('Corrección concurrente B'),
+    ]);
+    expect(resultados.filter((resultado) => resultado.status === 'fulfilled'))
+      .toHaveLength(1);
+    const rechazado = resultados.find((resultado) => resultado.status === 'rejected');
+    expect(rechazado?.status).toBe('rejected');
+    if (rechazado?.status === 'rejected') {
+      expect(rechazado.reason).toBeInstanceOf(BadRequestException);
+    }
+
+    const reemplazos = await adminSource.getRepository(Evento).find({
+      where: {
+        tenantId,
+        animalId: concurrencyAnimalId,
+        eventoCorrigeId: original.evento.id,
+      },
+    });
+    expect(reemplazos).toHaveLength(1);
+    const originalGuardado = await adminSource.getRepository(Evento).findOne({
+      where: { id: original.evento.id, tenantId, animalId: concurrencyAnimalId },
+    });
+    expect(originalGuardado?.revertido).toBe(true);
+  });
+
   it('Flujo E2E Completo: Vacía -> Servicio (Servida) -> Diagnóstico (Preñada) -> Secado (En Secado) -> Parto (Vacía)', async () => {
     const queryRunner = dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -197,7 +298,7 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       // -------------------------------------------------------------
       // PASO 1: Registrar Servicio Reproductivo
       // -------------------------------------------------------------
-      const fechaServicio = '2026-03-01';
+      const fechaServicio = '2025-03-01';
       const servicioRes = await reproService.registrarServicio(
         animalId,
         tenantId,
@@ -223,6 +324,55 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
         'Titan-Pajilla-E2E',
       );
       expect(estadoServida.servicioActivo?.fpp).toBe(servicioRes.hitos.fpp);
+
+      await expect(
+        reproService.registrarServicio(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: '2025-03-02',
+            tipoServicio: 'Monta Natural',
+            toroOPajilla: 'No debe registrarse',
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        reproService.registrarDiagnostico(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: '2025-04-10',
+            eventoServicioId: servicioRes.evento.id,
+            eventoCorrigeId: servicioRes.evento.id,
+            metodo: 'Palpación',
+            resultado: 'Preñada',
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      const servicioTrasRechazo = await queryRunner.manager.findOne(Evento, {
+        where: { id: servicioRes.evento.id, tenantId, animalId },
+      });
+      expect(servicioTrasRechazo?.revertido).toBe(false);
+
+      await expect(
+        reproService.registrarDiagnostico(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: '2025-02-28',
+            eventoServicioId: servicioRes.evento.id,
+            metodo: 'Palpación',
+            resultado: 'Preñada',
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
 
       // -------------------------------------------------------------
       // PASO 2: Registrar Diagnóstico Positivo (Preñada)
@@ -252,6 +402,16 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       expect(estadoPreñada.servicioActivo?.fpp).toBe(servicioRes.hitos.fpp);
       expect(estadoPreñada.ultimoDiagnostico?.resultado).toBe('Preñada');
 
+      await expect(
+        reproService.registrarSecado(
+          animalId,
+          tenantId,
+          userId,
+          { fechaEvento: '2025-02-28' },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
       // -------------------------------------------------------------
       // PASO 3: Registrar Secado Real
       // -------------------------------------------------------------
@@ -276,10 +436,43 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       expect(estadoSecado.estadoActual).toBe('En Secado');
       expect(estadoSecado.servicioActivo).toBeDefined();
 
+      await expect(
+        reproService.registrarDiagnostico(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: fechaDiagnostico,
+            eventoServicioId: servicioRes.evento.id,
+            eventoCorrigeId: diagRes.evento.id,
+            metodo: 'Palpación',
+            resultado: 'Vacía',
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      const diagnosticoActivoTrasRechazo = await queryRunner.manager.findOne(
+        Evento,
+        { where: { id: diagRes.evento.id, animalId, tenantId } },
+      );
+      expect(diagnosticoActivoTrasRechazo?.revertido).toBe(false);
+
       // -------------------------------------------------------------
       // PASO 4: Registrar Parto
       // -------------------------------------------------------------
       const fechaParto = servicioRes.hitos.fpp;
+      await expect(
+        reproService.registrarParto(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: '2025-02-28',
+            eventoServicioId: servicioRes.evento.id,
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
       await reproService.registrarParto(
         animalId,
         tenantId,
@@ -303,9 +496,204 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       expect(estadoFinal.servicioActivo).toBeUndefined();
       expect(estadoFinal.ultimoParto?.facilidadParto).toBe('Normal');
 
+      const fechaServicioNuevoCiclo = new Date(`${fechaParto}T00:00:00.000Z`);
+      fechaServicioNuevoCiclo.setUTCDate(fechaServicioNuevoCiclo.getUTCDate() + 1);
+      const nuevoCiclo = await reproService.registrarServicio(
+        animalId,
+        tenantId,
+        userId,
+        {
+          fechaEvento: fechaServicioNuevoCiclo.toISOString().slice(0, 10),
+          tipoServicio: 'Monta Natural',
+          toroOPajilla: 'Segundo ciclo',
+        },
+        queryRunner.manager,
+      );
+      const fechaDiagnosticoNegativo = new Date(
+        `${nuevoCiclo.evento.fechaEvento}T00:00:00.000Z`,
+      );
+      fechaDiagnosticoNegativo.setUTCDate(fechaDiagnosticoNegativo.getUTCDate() + 1);
+      fechaCierreCiclo = fechaDiagnosticoNegativo.toISOString().slice(0, 10);
+      await reproService.registrarDiagnostico(
+        animalId,
+        tenantId,
+        userId,
+        {
+          fechaEvento: fechaDiagnosticoNegativo.toISOString().slice(0, 10),
+          eventoServicioId: nuevoCiclo.evento.id,
+          metodo: 'Palpación',
+          resultado: 'Vacía',
+        },
+        queryRunner.manager,
+      );
+      const estadoTrasDiagnosticoNegativo =
+        await reproService.obtenerEstadoReproductivo(
+          animalId,
+          tenantId,
+          queryRunner.manager,
+        );
+      expect(estadoTrasDiagnosticoNegativo.estadoActual).toBe('Vacía');
+
+      const diagnosticosAntesDeIntentoReapertura = await queryRunner.manager.count(
+        Evento,
+        { where: { animalId, tenantId, tipo: 'DIAGNOSTICO' } },
+      );
+      await expect(
+        reproService.registrarDiagnostico(
+          animalId,
+          tenantId,
+          userId,
+          {
+            fechaEvento: fechaCierreCiclo,
+            eventoServicioId: nuevoCiclo.evento.id,
+            metodo: 'Palpación',
+            resultado: 'Preñada',
+          },
+          queryRunner.manager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      const diagnosticosTrasIntentoReapertura = await queryRunner.manager.count(
+        Evento,
+        { where: { animalId, tenantId, tipo: 'DIAGNOSTICO' } },
+      );
+      expect(diagnosticosTrasIntentoReapertura).toBe(
+        diagnosticosAntesDeIntentoReapertura,
+      );
+
       await queryRunner.commitTransaction();
     } finally {
       await queryRunner.release();
     }
+  });
+
+  it('OpenAPI publica la misma forma que perfil, documentos y alta reproductiva', async () => {
+    const token = Buffer.from(
+      JSON.stringify({
+        sub: userId,
+        tenant_id: tenantId,
+        rol: 'propietario',
+        email: 'qa-openapi@example.invalid',
+      }),
+    ).toString('base64');
+    const authorization = `Bearer ${token}`;
+    const specification = JSON.parse(
+      readFileSync(new URL('../../../openapi.json', import.meta.url), 'utf8'),
+    ) as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            responses: Record<
+              string,
+              {
+                content?: {
+                  'application/json'?: {
+                    schema?: { $ref?: string; items?: { $ref?: string } };
+                  };
+                };
+              }
+            >;
+          }
+        >
+      >;
+      components: { schemas: Record<string, { properties: Record<string, unknown> }> };
+    };
+
+    const perfil = await request(app.getHttpServer())
+      .get('/auth/perfil')
+      .set('Authorization', authorization)
+      .expect(200);
+    expect(Object.keys(perfil.body).sort()).toEqual(
+      Object.keys(specification.components.schemas.UserProfileResponseDto.properties).sort(),
+    );
+
+    const documentos = await request(app.getHttpServer())
+      .get(`/animales/${animalId}/documentos`)
+      .set('Authorization', authorization)
+      .expect(200);
+    expect(documentos.body).toEqual([]);
+    expect(
+      specification.paths['/animales/{id}/documentos'].get.responses['200']
+        .content?.['application/json']?.schema?.items?.$ref,
+    ).toBe('#/components/schemas/DocumentoAnimalResponseDto');
+
+    const fechaServicio = new Date(`${fechaCierreCiclo}T00:00:00.000Z`);
+    fechaServicio.setUTCDate(fechaServicio.getUTCDate() + 1);
+    const response = await request(app.getHttpServer())
+      .post(`/animales/${animalId}/servicios`)
+      .set('Authorization', authorization)
+      .send({
+        fechaEvento: fechaServicio.toISOString().slice(0, 10),
+        tipoServicio: 'Inseminación Artificial',
+        toroOPajilla: 'OpenAPI integration fixture',
+      })
+      .expect(201);
+    const responseSchema =
+      specification.paths['/animales/{id}/servicios'].post.responses['201']
+        .content?.['application/json']?.schema?.$ref;
+    expect(responseSchema).toBe(
+      '#/components/schemas/RegistrarServicioResponseDto',
+    );
+    expect(Object.keys(response.body).sort()).toEqual(
+      Object.keys(
+        specification.components.schemas.RegistrarServicioResponseDto.properties,
+      ).sort(),
+    );
+
+    const diaSiguiente = (date: string): string => {
+      const next = new Date(`${date}T00:00:00.000Z`);
+      next.setUTCDate(next.getUTCDate() + 1);
+      return next.toISOString().slice(0, 10);
+    };
+    const diagnostico = await request(app.getHttpServer())
+      .post(`/animales/${animalId}/diagnosticos`)
+      .set('Authorization', authorization)
+      .send({
+        fechaEvento: diaSiguiente(response.body.evento.fechaEvento),
+        eventoServicioId: response.body.evento.id,
+        metodo: 'Palpación',
+        resultado: 'Preñada',
+      })
+      .expect(201);
+    expect(
+      specification.paths['/animales/{id}/diagnosticos'].post.responses['201']
+        .content?.['application/json']?.schema?.$ref,
+    ).toBe('#/components/schemas/RegistrarDiagnosticoResponseDto');
+    expect(Object.keys(diagnostico.body).sort()).toEqual(
+      Object.keys(
+        specification.components.schemas.RegistrarDiagnosticoResponseDto.properties,
+      ).sort(),
+    );
+
+    const secado = await request(app.getHttpServer())
+      .post(`/animales/${animalId}/secados`)
+      .set('Authorization', authorization)
+      .send({ fechaEvento: diaSiguiente(diagnostico.body.evento.fechaEvento) })
+      .expect(201);
+    expect(
+      specification.paths['/animales/{id}/secados'].post.responses['201']
+        .content?.['application/json']?.schema?.$ref,
+    ).toBe('#/components/schemas/RegistrarSecadoResponseDto');
+    expect(Object.keys(secado.body).sort()).toEqual(
+      Object.keys(
+        specification.components.schemas.RegistrarSecadoResponseDto.properties,
+      ).sort(),
+    );
+
+    const parto = await request(app.getHttpServer())
+      .post(`/animales/${animalId}/partos`)
+      .set('Authorization', authorization)
+      .send({ fechaEvento: diaSiguiente(secado.body.evento.fechaEvento) })
+      .expect(201);
+    expect(
+      specification.paths['/animales/{id}/partos'].post.responses['201']
+        .content?.['application/json']?.schema?.$ref,
+    ).toBe('#/components/schemas/RegistrarPartoResponseDto');
+    expect(Object.keys(parto.body).sort()).toEqual(
+      Object.keys(
+        specification.components.schemas.RegistrarPartoResponseDto.properties,
+      ).sort(),
+    );
   });
 });

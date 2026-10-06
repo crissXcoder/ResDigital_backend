@@ -34,7 +34,6 @@ import { RegistrarSecadoDto } from './dto/registrar-secado.dto.js';
 import { ProximosEventosQueryDto } from './dto/proximos-eventos-query.dto.js';
 import {
   EstadoReproductivoResponseDto,
-  HitosReproductivosDto,
   ProximoEventoReproductivoDto,
 } from './dto/responses/estado-reproductivo.response.dto.js';
 import {
@@ -44,6 +43,12 @@ import {
   EventoReproductivoHistorialDto,
   aHistorialDto,
 } from './dto/responses/evento-reproductivo-historial.dto.js';
+import {
+  RegistrarDiagnosticoResponseDto,
+  RegistrarPartoResponseDto,
+  RegistrarSecadoResponseDto,
+  RegistrarServicioResponseDto,
+} from './dto/responses/evento-reproductivo-write-response.dto.js';
 import type { EstadoReproductivoInfo } from './interfaces/reproductive-state.interface.js';
 
 /**
@@ -87,7 +92,7 @@ export class ReproductiveController {
     status: 201,
     description:
       'Servicio registrado. Devuelve el evento, su detalle y los hitos calculados.',
-    type: HitosReproductivosDto,
+    type: RegistrarServicioResponseDto,
   })
   @ApiResponse({
     status: 400,
@@ -130,7 +135,7 @@ export class ReproductiveController {
       'Registra el resultado (Preñada o Vacía) asociado a un servicio previo. Es lo único que confirma una preñez: un servicio por sí solo no cuenta como gestante.',
   })
   @ApiParam({ name: 'id', description: 'ID del animal hembra', format: 'uuid' })
-  @ApiResponse({ status: 201, description: 'Diagnóstico registrado' })
+  @ApiResponse({ status: 201, description: 'Diagnóstico registrado', type: RegistrarDiagnosticoResponseDto })
   @ApiResponse({
     status: 400,
     description: 'Animal macho, fecha futura, o método/resultado inválido',
@@ -171,7 +176,7 @@ export class ReproductiveController {
       'Cierra el ciclo reproductivo y devuelve el animal a Vacía. Requiere que el animal esté en estado Preñada o En Secado. Un aborto se registra con facilidadParto = "Aborto".',
   })
   @ApiParam({ name: 'id', description: 'ID de la madre', format: 'uuid' })
-  @ApiResponse({ status: 201, description: 'Parto registrado' })
+  @ApiResponse({ status: 201, description: 'Parto registrado', type: RegistrarPartoResponseDto })
   @ApiResponse({
     status: 400,
     description:
@@ -213,7 +218,7 @@ export class ReproductiveController {
       'Registra la suspensión real del ordeño, que puede diferir de la fecha de secado calculada (FPP - 60 días).',
   })
   @ApiParam({ name: 'id', description: 'ID del animal hembra', format: 'uuid' })
-  @ApiResponse({ status: 201, description: 'Secado registrado' })
+  @ApiResponse({ status: 201, description: 'Secado registrado', type: RegistrarSecadoResponseDto })
   @ApiResponse({
     status: 400,
     description: 'Animal macho, fecha futura o datos inválidos',

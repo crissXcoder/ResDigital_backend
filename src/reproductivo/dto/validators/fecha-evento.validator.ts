@@ -41,6 +41,38 @@ export function EsFechaNoFutura(
   };
 }
 
+export function isValidCivilDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  if (year < 1 || month < 1 || month > 12) return false;
+
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+export function EsFechaCalendarioValida(
+  options?: ValidationOptions,
+): PropertyDecorator {
+  return function (object: object, propertyName: string | symbol): void {
+    registerDecorator({
+      name: 'esFechaCalendarioValida',
+      target: object.constructor,
+      propertyName: propertyName as string,
+      options,
+      validator: {
+        validate: isValidCivilDate,
+        defaultMessage(args: ValidationArguments): string {
+          return `${args.property} debe ser una fecha calendario válida en formato YYYY-MM-DD.`;
+        },
+      },
+    });
+  };
+}
+
 /**
  * Decorador compuesto para las fechas de evento de los 4 DTOs reproductivos.
  *
@@ -53,6 +85,9 @@ export function EsFechaDeEvento(nombreLegible: string) {
     IsNotEmpty({ message: `La fecha ${nombreLegible} es requerida` }),
     Matches(/^\d{4}-\d{2}-\d{2}$/, {
       message: `La fecha ${nombreLegible} debe tener formato YYYY-MM-DD`,
+    }),
+    EsFechaCalendarioValida({
+      message: `La fecha ${nombreLegible} debe existir en el calendario`,
     }),
     EsFechaNoFutura({
       message: `La fecha ${nombreLegible} no puede ser futura`,
