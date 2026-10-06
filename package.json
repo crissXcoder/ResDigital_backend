@@ -15,6 +15,7 @@
     "migration:replay": "node tooling/migration-replay.mjs",
     "openapi:generate": "pnpm build && node tooling/export-openapi.mjs --sync-frontend",
     "openapi:check": "pnpm build && node tooling/export-openapi.mjs --check",
+    "security:verify": "pnpm build && node tooling/security-verify.mjs",
     "build": "nest build",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
