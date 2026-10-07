@@ -13,6 +13,7 @@ import { CreatePotreroDto } from './dto/create-potrero.dto.js';
 import { UpdatePotreroDto } from './dto/update-potrero.dto.js';
 import { AsignarAnimalesDto } from './dto/asignar-animales.dto.js';
 import { hoyEnZona } from '../reproductivo/services/reproductive-calculation.service.js';
+import { calcularUaAnimal } from './constants/ua-factors.js';
 
 @Injectable()
 export class PotrerosService {
@@ -263,14 +264,29 @@ export class PotrerosService {
 
   private calcularEstadoPotrero(potrero: Potrero) {
     let uaTotal = 0;
-    const animalesCount = potrero.animales?.length || 0;
-    potrero.animales?.forEach((a) => {
-      if (['Vaca', 'Toro', 'Novillo mayor'].includes(a.categoria)) {
-        uaTotal += 1.0;
-      } else {
-        uaTotal += 0.5;
-      }
-    });
+    let uaPorPeso = 0;
+    let uaPorCategoria = 0;
+
+    const animalesEnriquecidos =
+      potrero.animales?.map((a) => {
+        const { ua, metodo } = calcularUaAnimal(a);
+        uaTotal += ua;
+        if (metodo === 'PESO') {
+          uaPorPeso += ua;
+        } else {
+          uaPorCategoria += ua;
+        }
+        return {
+          ...a,
+          uaCalculada: ua,
+          metodoCalculoUa: metodo,
+        };
+      }) || [];
+
+    uaTotal = Number(uaTotal.toFixed(2));
+    uaPorPeso = Number(uaPorPeso.toFixed(2));
+    uaPorCategoria = Number(uaPorCategoria.toFixed(2));
+    const animalesCount = animalesEnriquecidos.length;
 
     const areaHa = Number.parseFloat(String(potrero.areaHa));
     const capacidadUaHa = Number.parseFloat(
@@ -318,8 +334,14 @@ export class PotrerosService {
 
     return {
       ...potrero,
+      animales: animalesEnriquecidos,
       cargaActualUaHa: Number(cargaActualUaHa.toFixed(2)),
       uaTotal,
+      desgloseUa: {
+        porPeso: uaPorPeso,
+        porCategoria: uaPorCategoria,
+        total: uaTotal,
+      },
       estadoCalculado,
       estadoCarga,
       estadoOperativo,
