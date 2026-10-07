@@ -932,7 +932,7 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
       fechaCompra: null,
       potreroId: 'potrero-uuid-9',
       activo: true,
-    } as Animal;
+    } as unknown as Animal;
 
     vi.mocked(mockEntityManager.findOne).mockResolvedValue(animal);
 
