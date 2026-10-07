@@ -10,6 +10,8 @@ import { AnimalDocumentStorageService } from './animal-document-storage.service.
 import { registerAfterRollbackCallback } from '../auth/interceptors/rls-transaction.interceptor.js';
 import { Animal } from './entities/animal.entity.js';
 import { DocumentoAnimal } from './entities/documento-animal.entity.js';
+import { Evento } from '../eventos/entities/evento.entity.js';
+import { EventoBaja } from './entities/evento-baja.entity.js';
 import type { CreateAnimalDto } from './dto/create-animal.dto.js';
 import type { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import type { BajaAnimalDto } from './dto/baja-animal.dto.js';
@@ -430,6 +432,7 @@ export class AnimalesService {
     tenantId: string,
     bajaDto: BajaAnimalDto,
     manager: EntityManager,
+    actorUserId?: string,
   ) {
     const animal = await this.findOne(id, tenantId, manager);
 
@@ -452,10 +455,35 @@ export class AnimalesService {
       );
     }
 
-    // Los campos opcionales se normalizan a null: las columnas son nullable, y
-    // asignar `undefined` hace que TypeORM omita la columna en el UPDATE en vez
-    // de limpiarla.
+    // 1. Crear evento inmutable base en public.evento
+    const repoEvento = manager.getRepository(Evento);
+    const evento = repoEvento.create({
+      tenantId,
+      animalId: animal.id,
+      tipo: 'BAJA',
+      fechaEvento: bajaFecha,
+      usuarioId: actorUserId || '00000000-0000-0000-0000-000000000000',
+      notas: bajaDto.motivoBaja ?? null,
+    });
+    const eventoGuardado = await repoEvento.save(evento);
+
+    // 2. Crear detalle específico del evento en public.evento_baja
+    const repoEventoBaja = manager.getRepository(EventoBaja);
+    const eventoBaja = repoEventoBaja.create({
+      eventoId: eventoGuardado.id,
+      tipoBaja: bajaDto.tipoBaja,
+      motivo: bajaDto.motivoBaja ?? null,
+      precioVentaCrc: bajaDto.precioVentaCrc ?? null,
+      pesoFinalKg: bajaDto.pesoFinalKg ?? null,
+    });
+    await repoEventoBaja.save(eventoBaja);
+
+    // 3. Proyección derivada en la entidad animal:
+    // - Animal deja hato activo sin DELETE
+    // - Se libera el potrero para que no continúe ocupando carga
+    // - Los campos de salida se mantienen sincronizados para lecturas rápidas
     animal.activo = false;
+    animal.potreroId = null;
     animal.tipoBaja = bajaDto.tipoBaja;
     animal.motivoBaja = bajaDto.motivoBaja ?? null;
     animal.fechaBaja = bajaDto.fechaBaja;
@@ -463,6 +491,51 @@ export class AnimalesService {
     animal.pesoFinalKg = bajaDto.pesoFinalKg ?? null;
 
     return await manager.save(animal);
+  }
+
+  async getBajaByAnimal(
+    animalId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ) {
+    const animal = await this.findOne(animalId, tenantId, manager);
+
+    const eventoBaja = await manager
+      .getRepository(EventoBaja)
+      .createQueryBuilder('eb')
+      .innerJoinAndSelect('eb.evento', 'evento')
+      .where('evento.animal_id = :animalId', { animalId })
+      .andWhere('evento.tenant_id = :tenantId', { tenantId })
+      .andWhere('evento.tipo = :tipo', { tipo: 'BAJA' })
+      .andWhere('evento.revertido = false')
+      .orderBy('evento.fecha_registro', 'DESC')
+      .getOne();
+
+    if (!eventoBaja) {
+      if (!animal.activo) {
+        return {
+          eventoId: null,
+          tipoBaja: animal.tipoBaja,
+          motivo: animal.motivoBaja,
+          fechaBaja: animal.fechaBaja,
+          precioVentaCrc: animal.precioVentaCrc,
+          pesoFinalKg: animal.pesoFinalKg,
+          usuarioId: null,
+        };
+      }
+      throw new NotFoundException('El animal no tiene registro de baja activo.');
+    }
+
+    return {
+      eventoId: eventoBaja.eventoId,
+      tipoBaja: eventoBaja.tipoBaja,
+      motivo: eventoBaja.motivo,
+      fechaBaja: eventoBaja.evento.fechaEvento,
+      fechaRegistro: eventoBaja.evento.fechaRegistro,
+      precioVentaCrc: eventoBaja.precioVentaCrc,
+      pesoFinalKg: eventoBaja.pesoFinalKg,
+      usuarioId: eventoBaja.evento.usuarioId,
+    };
   }
 
   async getDocumentos(

@@ -6,8 +6,11 @@ import { AnimalesController } from './animales.controller.js';
 import { AnimalesService } from './animales.service.js';
 import { AnimalDocumentStorageService } from './animal-document-storage.service.js';
 
+import { Evento } from '../eventos/entities/evento.entity.js';
+import { EventoBaja } from './entities/evento-baja.entity.js';
+
 @Module({
-  imports: [TypeOrmModule.forFeature([Animal, DocumentoAnimal])],
+  imports: [TypeOrmModule.forFeature([Animal, DocumentoAnimal, Evento, EventoBaja])],
   controllers: [AnimalesController],
   providers: [AnimalesService, AnimalDocumentStorageService],
   exports: [TypeOrmModule, AnimalesService],

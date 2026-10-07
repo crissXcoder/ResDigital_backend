@@ -85,7 +85,26 @@ export class AnimalesController {
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
   ) {
-    return this.animalesService.darDeBaja(id, user.tenantId, bajaDto, manager);
+    return this.animalesService.darDeBaja(
+      id,
+      user.tenantId,
+      bajaDto,
+      manager,
+      user.userId,
+    );
+  }
+
+  @Get(':id/baja')
+  @Roles('propietario', 'administrador', 'veterinario', 'peon')
+  @ApiOperation({ summary: 'Consultar el evento de baja histórico del animal' })
+  @ApiResponse({ status: 200, description: 'Evento histórico de baja del animal' })
+  @ApiResponse({ status: 404, description: 'Animal no encontrado o sin registro de baja' })
+  getBaja(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.getBajaByAnimal(id, user.tenantId, manager);
   }
 
   @Get(':id/documentos')

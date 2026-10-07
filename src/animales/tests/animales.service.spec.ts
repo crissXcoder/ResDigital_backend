@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EntityManager } from 'typeorm';
 import { AnimalesService } from '../animales.service.js';
 import { Animal } from '../entities/animal.entity.js';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Evento } from '../../eventos/entities/evento.entity.js';
+import { EventoBaja } from '../entities/evento-baja.entity.js';
 import { DocumentoAnimal } from '../entities/documento-animal.entity.js';
 import { AnimalDocumentStorageService } from '../animal-document-storage.service.js';
 import { runAfterRollbackCallbacks } from '../../auth/interceptors/rls-transaction.interceptor.js';
@@ -707,6 +709,10 @@ describe('AnimalesService - Validaciones de Cronología (HATO-T004)', () => {
       create: vi.fn((_entity, val) => val),
       save: vi.fn((val) => Promise.resolve(val)),
       merge: vi.fn((_entity, dest, src) => Object.assign(dest, src)),
+      getRepository: vi.fn().mockReturnValue({
+        create: vi.fn((val) => val),
+        save: vi.fn((val) => Promise.resolve({ id: 'mock-id-evento', ...val })),
+      }),
     } as unknown as EntityManager;
   });
 
@@ -864,5 +870,282 @@ describe('AnimalesService - Validaciones de Cronología (HATO-T004)', () => {
     expect(res.activo).toBe(false);
     expect(res.tipoBaja).toBe('Venta Comercial');
     expect(mockEntityManager.save).toHaveBeenCalled();
+  });
+});
+
+describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
+  let service: AnimalesService;
+  let mockEntityManager: EntityManager;
+  let mockRepoEvento: any;
+  let mockRepoEventoBaja: any;
+  let eventosGuardados: any[];
+  let eventosBajaGuardados: any[];
+
+  const TENANT_A = '11111111-1111-1111-1111-111111111111';
+  const ACTOR_USER_ID = '99999999-9999-9999-9999-999999999999';
+
+  beforeEach(() => {
+    service = new AnimalesService({
+      validateObject: vi.fn().mockResolvedValue(undefined),
+      removeObject: vi.fn().mockResolvedValue(undefined),
+    } as any);
+
+    eventosGuardados = [];
+    eventosBajaGuardados = [];
+
+    mockRepoEvento = {
+      create: vi.fn((dto) => ({ id: 'evt-uuid-1', ...dto })),
+      save: vi.fn((evt) => {
+        eventosGuardados.push(evt);
+        return Promise.resolve(evt);
+      }),
+    };
+
+    mockRepoEventoBaja = {
+      create: vi.fn((dto) => ({ ...dto })),
+      save: vi.fn((eb) => {
+        eventosBajaGuardados.push(eb);
+        return Promise.resolve(eb);
+      }),
+    };
+
+    mockEntityManager = {
+      findOne: vi.fn(),
+      save: vi.fn((val) => Promise.resolve(val)),
+      getRepository: vi.fn((entity: any) => {
+        if (entity === Evento) return mockRepoEvento;
+        if (entity === EventoBaja) return mockRepoEventoBaja;
+        return {
+          create: vi.fn((v) => v),
+          save: vi.fn((v) => Promise.resolve(v)),
+        };
+      }),
+    } as unknown as EntityManager;
+  });
+
+  it('darDeBaja: persiste Evento y EventoBaja, libera potrero y registra usuarioId del actor', async () => {
+    const animal = {
+      id: 'animal-uuid-1',
+      tenantId: TENANT_A,
+      areteInterno: '1001',
+      fechaNacimiento: '2023-01-01',
+      fechaCompra: null,
+      potreroId: 'potrero-uuid-9',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animal);
+
+    const bajaDto: any = {
+      tipoBaja: 'Venta Comercial',
+      motivoBaja: 'Venta a subasta ganadera',
+      fechaBaja: '2026-03-15',
+      precioVentaCrc: 850000,
+      pesoFinalKg: 480.5,
+    };
+
+    const resultado = await service.darDeBaja(
+      'animal-uuid-1',
+      TENANT_A,
+      bajaDto,
+      mockEntityManager,
+      ACTOR_USER_ID,
+    );
+
+    // 1. Animal actualizado: inactivo y potrero liberado
+    expect(resultado.activo).toBe(false);
+    expect(resultado.potreroId).toBeNull();
+    expect(resultado.tipoBaja).toBe('Venta Comercial');
+    expect(resultado.motivoBaja).toBe('Venta a subasta ganadera');
+    expect(resultado.fechaBaja).toBe('2026-03-15');
+    expect(resultado.precioVentaCrc).toBe(850000);
+    expect(resultado.pesoFinalKg).toBe(480.5);
+
+    // 2. Evento base inmutable
+    expect(eventosGuardados).toHaveLength(1);
+    expect(eventosGuardados[0]).toMatchObject({
+      tenantId: TENANT_A,
+      animalId: 'animal-uuid-1',
+      tipo: 'BAJA',
+      fechaEvento: '2026-03-15',
+      usuarioId: ACTOR_USER_ID,
+      notas: 'Venta a subasta ganadera',
+    });
+
+    // 3. Detalle inmutable en evento_baja
+    expect(eventosBajaGuardados).toHaveLength(1);
+    expect(eventosBajaGuardados[0]).toMatchObject({
+      eventoId: 'evt-uuid-1',
+      tipoBaja: 'Venta Comercial',
+      motivo: 'Venta a subasta ganadera',
+      precioVentaCrc: 850000,
+      pesoFinalKg: 480.5,
+    });
+  });
+
+  it('darDeBaja: rechaza dar de baja a un animal ya inactivo con ConflictException (409)', async () => {
+    const animalYaBaja = {
+      id: 'animal-inactivo',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: false,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animalYaBaja);
+
+    const bajaDto: any = {
+      tipoBaja: 'Descarte',
+      fechaBaja: '2026-03-15',
+    };
+
+    await expect(
+      service.darDeBaja('animal-inactivo', TENANT_A, bajaDto, mockEntityManager),
+    ).rejects.toThrowError(ConflictException);
+
+    expect(eventosGuardados).toHaveLength(0);
+    expect(eventosBajaGuardados).toHaveLength(0);
+  });
+
+  it('darDeBaja: valida que la fechaBaja no sea previa a nacimiento o compra', async () => {
+    const animal = {
+      id: 'animal-103',
+      tenantId: TENANT_A,
+      fechaNacimiento: '2024-01-01',
+      fechaCompra: '2024-06-01',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animal);
+
+    // Antes de nacer
+    await expect(
+      service.darDeBaja(
+        'animal-103',
+        TENANT_A,
+        { tipoBaja: 'Fallecimiento', fechaBaja: '2023-12-31' } as any,
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(BadRequestException);
+
+    // Antes de comprar
+    await expect(
+      service.darDeBaja(
+        'animal-103',
+        TENANT_A,
+        { tipoBaja: 'Fallecimiento', fechaBaja: '2024-03-01' } as any,
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(BadRequestException);
+  });
+
+  it('getBajaByAnimal: retorna el evento histórico si existe', async () => {
+    const animal = {
+      id: 'animal-uuid-1',
+      tenantId: TENANT_A,
+      activo: false,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animal);
+
+    const mockQueryBuilder = {
+      innerJoinAndSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue({
+        eventoId: 'evt-uuid-1',
+        tipoBaja: 'Venta Comercial',
+        motivo: 'Venta realizada',
+        precioVentaCrc: 600000,
+        pesoFinalKg: 490,
+        evento: {
+          fechaEvento: '2026-03-10',
+          fechaRegistro: new Date('2026-03-10T14:00:00Z'),
+          usuarioId: ACTOR_USER_ID,
+        },
+      }),
+    };
+
+    (mockEntityManager.getRepository as any) = vi.fn().mockReturnValue({
+      createQueryBuilder: vi.fn().mockReturnValue(mockQueryBuilder),
+    });
+
+    const res = await service.getBajaByAnimal('animal-uuid-1', TENANT_A, mockEntityManager);
+
+    expect(res).toEqual({
+      eventoId: 'evt-uuid-1',
+      tipoBaja: 'Venta Comercial',
+      motivo: 'Venta realizada',
+      fechaBaja: '2026-03-10',
+      fechaRegistro: new Date('2026-03-10T14:00:00Z'),
+      precioVentaCrc: 600000,
+      pesoFinalKg: 490,
+      usuarioId: ACTOR_USER_ID,
+    });
+  });
+
+  it('getBajaByAnimal: retorna fallback de campos en animal si no existe evento histórico aún', async () => {
+    const animal = {
+      id: 'animal-historico',
+      tenantId: TENANT_A,
+      activo: false,
+      tipoBaja: 'Fallecimiento',
+      motivoBaja: 'Causas naturales',
+      fechaBaja: '2025-05-01',
+      precioVentaCrc: null,
+      pesoFinalKg: 400,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animal);
+
+    const mockQueryBuilder = {
+      innerJoinAndSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue(null),
+    };
+
+    (mockEntityManager.getRepository as any) = vi.fn().mockReturnValue({
+      createQueryBuilder: vi.fn().mockReturnValue(mockQueryBuilder),
+    });
+
+    const res = await service.getBajaByAnimal('animal-historico', TENANT_A, mockEntityManager);
+
+    expect(res).toEqual({
+      eventoId: null,
+      tipoBaja: 'Fallecimiento',
+      motivo: 'Causas naturales',
+      fechaBaja: '2025-05-01',
+      precioVentaCrc: null,
+      pesoFinalKg: 400,
+      usuarioId: null,
+    });
+  });
+
+  it('getBajaByAnimal: lanza NotFoundException si el animal está activo y no tiene baja', async () => {
+    const animalActivo = {
+      id: 'animal-activo',
+      tenantId: TENANT_A,
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValue(animalActivo);
+
+    const mockQueryBuilder = {
+      innerJoinAndSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      getOne: vi.fn().mockResolvedValue(null),
+    };
+
+    (mockEntityManager.getRepository as any) = vi.fn().mockReturnValue({
+      createQueryBuilder: vi.fn().mockReturnValue(mockQueryBuilder),
+    });
+
+    await expect(
+      service.getBajaByAnimal('animal-activo', TENANT_A, mockEntityManager),
+    ).rejects.toThrowError(NotFoundException);
   });
 });
