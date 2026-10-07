@@ -273,6 +273,36 @@
         "tags": [
           "Animales"
         ]
+      },
+      "get": {
+        "operationId": "AnimalesController_getBaja",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evento histórico de baja del animal"
+          },
+          "404": {
+            "description": "Animal no encontrado o sin registro de baja"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar el evento de baja histórico del animal",
+        "tags": [
+          "Animales"
+        ]
       }
     },
     "/animales/{id}/documentos": {
