@@ -33,15 +33,6 @@ async function install(name) {
   if (existsSync(destination)) return destination;
   mkdirSync(dirname(destination), { recursive: true });
   const archive = process.platform === 'win32' ? `${destination}.zip` : `${destination}.archive`;
-  const response = await fetch(tool.url + tool.archive, { redirect: 'follow' });
-  if (!response.ok || !response.body) throw new Error(`${name}: HTTP ${response.status}.`);
-  await pipeline(response.body, createWriteStream(archive));
-  const shasums = await fetch(tool.url + tool.checksums, { redirect: 'follow' });
-  if (!shasums.ok) throw new Error(`${name}: checksums oficiales no disponibles.`);
-  const officialLine = (await shasums.text()).split(/\r?\n/).find((line) => line.trim().endsWith(tool.archive));
-  const officialSha = officialLine?.trim().split(/\s+/)[0];
-  if (!/^[0-9a-f]{64}$/.test(officialSha ?? '') || createHash('sha256').update(readFileSync(archive)).digest('hex') !== officialSha) { rmSync(archive, { force: true }); throw new Error(`${name}: SHA-256 no coincide con checksum oficial.`); }
-  const archive = `${destination}.archive`;
   try {
     const response = await fetch(tool.url + tool.archive, { redirect: 'follow' });
     if (!response.ok || !response.body) throw new Error(`${name}: HTTP ${response.status}.`);

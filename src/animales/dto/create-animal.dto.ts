@@ -5,7 +5,9 @@ import {
   IsIn,
   IsNumber,
   IsDateString,
+  Min,
 } from 'class-validator';
+import { EsFechaNoFutura } from './validators/fecha-animal.validator.js';
 
 /** La base tiene CHECK (sexo IN ('Hembra','Macho')). */
 export const SEXOS = ['Hembra', 'Macho'] as const;
@@ -24,6 +26,15 @@ export const CATEGORIAS_ANIMAL = [
   'Novilla',
   'Vaca',
   'Toro',
+] as const;
+
+export const ORIGENES_ANIMAL = ['Finca', 'Externa'] as const;
+
+export const METODOS_COMPRA = [
+  'Sinpe',
+  'Depósito',
+  'Efectivo',
+  'Combinado',
 ] as const;
 
 export class CreateAnimalDto {
@@ -59,10 +70,14 @@ export class CreateAnimalDto {
   potreroId?: string;
 
   @IsDateString()
+  @EsFechaNoFutura({
+    message: 'La fecha de nacimiento no puede ser una fecha futura',
+  })
   @IsOptional()
   fechaNacimiento?: string;
 
   @IsNumber()
+  @Min(0, { message: 'El peso actual no puede ser negativo' })
   @IsOptional()
   pesoActualKg?: number;
 
@@ -87,19 +102,25 @@ export class CreateAnimalDto {
   // reglas. Permitirlo acá dejaba crear un animal ya dado de baja, saltándose
   // el motivo, la fecha y el tipo de baja.
 
-  @IsString()
+  @IsIn(ORIGENES_ANIMAL, {
+    message: "El origen debe ser 'Finca' o 'Externa'",
+  })
   @IsOptional()
-  origen?: 'Finca' | 'Externa';
+  origen?: (typeof ORIGENES_ANIMAL)[number];
 
   @IsString()
   @IsOptional()
   compradoA?: string;
 
   @IsDateString()
+  @EsFechaNoFutura({
+    message: 'La fecha de compra no puede ser una fecha futura',
+  })
   @IsOptional()
   fechaCompra?: string;
 
   @IsNumber()
+  @Min(0, { message: 'El valor de compra no puede ser negativo' })
   @IsOptional()
   valorCompraCrc?: number;
 
@@ -107,9 +128,12 @@ export class CreateAnimalDto {
   @IsOptional()
   numeroGuia?: string;
 
-  @IsString()
+  @IsIn(METODOS_COMPRA, {
+    message:
+      "El método de compra debe ser 'Sinpe', 'Depósito', 'Efectivo' o 'Combinado'",
+  })
   @IsOptional()
-  metodoCompra?: 'Sinpe' | 'Depósito' | 'Efectivo' | 'Combinado';
+  metodoCompra?: (typeof METODOS_COMPRA)[number];
 
   @IsString({ each: true })
   @IsOptional()

@@ -7,8 +7,11 @@ import {
 import { EntityManager } from 'typeorm';
 import { Potrero } from './entities/potrero.entity.js';
 import { Animal } from '../animales/entities/animal.entity.js';
+import { Evento } from '../eventos/entities/evento.entity.js';
+import { EventoMovimiento } from './entities/evento-movimiento.entity.js';
 import { CreatePotreroDto } from './dto/create-potrero.dto.js';
 import { UpdatePotreroDto } from './dto/update-potrero.dto.js';
+import { AsignarAnimalesDto } from './dto/asignar-animales.dto.js';
 import { hoyEnZona } from '../reproductivo/services/reproductive-calculation.service.js';
 
 @Injectable()
@@ -85,47 +88,178 @@ export class PotrerosService {
   async asignarAnimales(
     id: string,
     tenantId: string,
-    animalIds: string[],
-    manager: EntityManager,
+    userIdOrAnimalIds: string | string[],
+    dtoOrManager: AsignarAnimalesDto | EntityManager,
+    maybeManager?: EntityManager,
   ) {
+    let userId: string;
+    let dto: AsignarAnimalesDto;
+    let manager: EntityManager;
+
+    if (Array.isArray(userIdOrAnimalIds)) {
+      userId = '00000000-0000-0000-0000-000000000000';
+      dto = { animalIds: userIdOrAnimalIds };
+      manager = dtoOrManager as EntityManager;
+    } else {
+      userId = userIdOrAnimalIds;
+      dto = dtoOrManager as AsignarAnimalesDto;
+      manager = maybeManager as EntityManager;
+    }
+
     const repoPotrero = manager.getRepository(Potrero);
     const repoAnimal = manager.getRepository(Animal);
+    const repoEvento = manager.getRepository(Evento);
+    const repoEventoMovimiento = manager.getRepository(EventoMovimiento);
 
     const potrero = await repoPotrero.findOne({ where: { id, tenantId } });
     if (!potrero) throw new NotFoundException('Potrero no encontrado');
 
-    if (animalIds && animalIds.length > 0) {
-      // Se comparan ids únicos: si el cliente manda el mismo animal dos veces,
-      // el UPDATE afecta una sola fila y la comparación contra `length` daba un
-      // 400 falso.
-      const idsUnicos = [...new Set(animalIds)];
+    const fechaEvento = dto.fecha ? dto.fecha.slice(0, 10) : hoyEnZona();
 
-      // Usamos QueryBuilder desde el manager para respetar la transacción RLS
-      const result = await repoAnimal
-        .createQueryBuilder()
-        .update(Animal)
-        .set({ potreroId: id })
-        .where('id IN (:...ids) AND tenant_id = :tenantId', {
+    if (dto.animalIds && dto.animalIds.length > 0) {
+      const idsUnicos = [...new Set(dto.animalIds)];
+
+      const animales = await repoAnimal
+        .createQueryBuilder('animal')
+        .where('animal.id IN (:...ids) AND animal.tenant_id = :tenantId', {
           ids: idsUnicos,
           tenantId,
         })
-        .execute();
+        .getMany();
 
-      if (result.affected !== idsUnicos.length) {
+      if (animales.length !== idsUnicos.length) {
         throw new BadRequestException(
           'Uno o más animales proporcionados no existen o no pertenecen al tenant actual.',
         );
       }
+
+      // Registro atómico de trazabilidad histórica para cada animal movilizado
+      for (const animal of animales) {
+        const potreroAnteriorId = animal.potreroId ?? null;
+
+        // 1. Crear evento maestro
+        const evento = repoEvento.create({
+          tenantId,
+          animalId: animal.id,
+          tipo: 'MOVIMIENTO',
+          fechaEvento,
+          usuarioId: userId,
+          notas: dto.motivo ?? null,
+        });
+        await repoEvento.save(evento);
+
+        // 2. Crear detalle específico del movimiento con origen y destino
+        const eventoMovimiento = repoEventoMovimiento.create({
+          eventoId: evento.id,
+          potreroOrigenId: potreroAnteriorId,
+          potreroDestinoId: id,
+          motivo: dto.motivo ?? null,
+        });
+        await repoEventoMovimiento.save(eventoMovimiento);
+
+        // 3. Actualizar la caché de ubicación actual del animal
+        animal.potreroId = id;
+        await repoAnimal.save(animal);
+      }
     }
 
-    // Fecha en la zona horaria de la finca, no en UTC: con toISOString() el
-    // registro saltaba al día siguiente durante las últimas seis horas de cada
-    // día (Costa Rica es UTC-6), y eso corría el cálculo de días de descanso.
-    potrero.fechaUltimoIngreso = hoyEnZona();
+    // Actualizar fecha de último ingreso en el potrero destino
+    potrero.fechaUltimoIngreso = fechaEvento;
     await repoPotrero.save(potrero);
 
     return this.findOne(id, tenantId, manager);
   }
+
+  async obtenerMovimientosPotrero(
+    potreroId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ) {
+    const potrero = await manager.getRepository(Potrero).findOne({
+      where: { id: potreroId, tenantId },
+    });
+    if (!potrero) throw new NotFoundException('Potrero no encontrado');
+
+    const movimientos = await manager
+      .getRepository(EventoMovimiento)
+      .createQueryBuilder('em')
+      .innerJoinAndSelect('em.evento', 'evento')
+      .innerJoinAndSelect('evento.animal', 'animal')
+      .leftJoinAndSelect('em.potreroOrigen', 'origen')
+      .leftJoinAndSelect('em.potreroDestino', 'destino')
+      .where('evento.tenant_id = :tenantId', { tenantId })
+      .andWhere(
+        '(em.potrero_origen_id = :potreroId OR em.potrero_destino_id = :potreroId)',
+        { potreroId },
+      )
+      .andWhere('evento.revertido = false')
+      .orderBy('evento.fecha_evento', 'DESC')
+      .addOrderBy('evento.fecha_registro', 'DESC')
+      .getMany();
+
+    return movimientos.map((m) => ({
+      id: m.eventoId,
+      tipo: m.potreroDestinoId === potreroId ? 'INGRESO' : 'SALIDA',
+      fechaEvento: m.evento.fechaEvento,
+      fechaRegistro: m.evento.fechaRegistro,
+      usuarioId: m.evento.usuarioId,
+      motivo: m.motivo,
+      animal: {
+        id: m.evento.animal.id,
+        areteInterno: m.evento.animal.areteInterno,
+        nombre: m.evento.animal.nombre,
+      },
+      potreroOrigen: m.potreroOrigen
+        ? { id: m.potreroOrigen.id, nombre: m.potreroOrigen.nombre }
+        : null,
+      potreroDestino: {
+        id: m.potreroDestino.id,
+        nombre: m.potreroDestino.nombre,
+      },
+    }));
+  }
+
+  async obtenerMovimientosAnimal(
+    animalId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ) {
+    const animal = await manager.getRepository(Animal).findOne({
+      where: { id: animalId, tenantId },
+    });
+    if (!animal) throw new NotFoundException('Animal no encontrado');
+
+    const movimientos = await manager
+      .getRepository(EventoMovimiento)
+      .createQueryBuilder('em')
+      .innerJoinAndSelect('em.evento', 'evento')
+      .leftJoinAndSelect('em.potreroOrigen', 'origen')
+      .leftJoinAndSelect('em.potreroDestino', 'destino')
+      .where('evento.tenant_id = :tenantId AND evento.animal_id = :animalId', {
+        tenantId,
+        animalId,
+      })
+      .andWhere('evento.revertido = false')
+      .orderBy('evento.fecha_evento', 'DESC')
+      .addOrderBy('evento.fecha_registro', 'DESC')
+      .getMany();
+
+    return movimientos.map((m) => ({
+      id: m.eventoId,
+      fechaEvento: m.evento.fechaEvento,
+      fechaRegistro: m.evento.fechaRegistro,
+      usuarioId: m.evento.usuarioId,
+      motivo: m.motivo,
+      potreroOrigen: m.potreroOrigen
+        ? { id: m.potreroOrigen.id, nombre: m.potreroOrigen.nombre }
+        : null,
+      potreroDestino: {
+        id: m.potreroDestino.id,
+        nombre: m.potreroDestino.nombre,
+      },
+    }));
+  }
+
 
   private calcularEstadoPotrero(potrero: Potrero) {
     let uaTotal = 0;

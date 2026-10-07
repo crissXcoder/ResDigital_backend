@@ -117,12 +117,180 @@ export class AnimalesService {
     return payload;
   }
 
+  /**
+   * Recorre la línea de ascendencia de un progenitor candidato para verificar
+   * si el animal actual figura entre sus ancestros, lo que crearía un ciclo genealógico.
+   */
+  private async detectarCicloAncestros(
+    animalId: string,
+    progenitorCandidatoId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const visitados = new Set<string>();
+    const cola: string[] = [progenitorCandidatoId];
+    let niveles = 0;
+    const MAX_PROFUNDIDAD = 50;
+
+    while (cola.length > 0 && niveles < MAX_PROFUNDIDAD) {
+      const actualId = cola.shift()!;
+      if (actualId === animalId) {
+        return true;
+      }
+      if (visitados.has(actualId)) {
+        continue;
+      }
+      visitados.add(actualId);
+
+      const actual = await manager.findOne(Animal, {
+        where: { id: actualId, tenantId },
+        select: { id: true, madreId: true, padreId: true },
+      });
+
+      if (actual) {
+        if (actual.madreId && !visitados.has(actual.madreId)) {
+          if (actual.madreId === animalId) return true;
+          cola.push(actual.madreId);
+        }
+        if (actual.padreId && !visitados.has(actual.padreId)) {
+          if (actual.padreId === animalId) return true;
+          cola.push(actual.padreId);
+        }
+      }
+      niveles++;
+    }
+
+    return false;
+  }
+
+  /**
+   * Valida reglas biológicas, aislamiento de tenant y ausencia de ciclos
+   * genealógicos para madreId y padreId.
+   */
+  private async validarGenealogia(
+    animalId: string | null,
+    tenantId: string,
+    madreId: string | null | undefined,
+    padreId: string | null | undefined,
+    manager: EntityManager,
+  ): Promise<void> {
+    // 1. Auto-parentesco (no puede ser su propio padre ni su propia madre)
+    if (animalId) {
+      if (madreId && madreId === animalId) {
+        throw new BadRequestException('Un animal no puede ser su propia madre.');
+      }
+      if (padreId && padreId === animalId) {
+        throw new BadRequestException('Un animal no puede ser su propio padre.');
+      }
+    }
+
+    // 2. Validación de Madre
+    if (madreId) {
+      const madre = await manager.findOne(Animal, {
+        where: { id: madreId, tenantId },
+        select: { id: true, sexo: true },
+      });
+
+      if (!madre) {
+        throw new BadRequestException(
+          'La vaca madre especificada no existe en esta finca.',
+        );
+      }
+
+      if (madre.sexo !== 'Hembra') {
+        throw new BadRequestException(
+          'La madre especificada debe ser de sexo Hembra.',
+        );
+      }
+
+      if (animalId) {
+        const hayCiclo = await this.detectarCicloAncestros(
+          animalId,
+          madreId,
+          tenantId,
+          manager,
+        );
+        if (hayCiclo) {
+          throw new BadRequestException(
+            'No se puede asignar como madre a un descendiente del animal (ciclo genealógico detectado).',
+          );
+        }
+      }
+    }
+
+    // 3. Validación de Padre
+    if (padreId) {
+      const padre = await manager.findOne(Animal, {
+        where: { id: padreId, tenantId },
+        select: { id: true, sexo: true },
+      });
+
+      if (!padre) {
+        throw new BadRequestException(
+          'El toro padre especificado no existe en esta finca.',
+        );
+      }
+
+      if (padre.sexo !== 'Macho') {
+        throw new BadRequestException(
+          'El padre especificado debe ser de sexo Macho.',
+        );
+      }
+
+      if (animalId) {
+        const hayCiclo = await this.detectarCicloAncestros(
+          animalId,
+          padreId,
+          tenantId,
+          manager,
+        );
+        if (hayCiclo) {
+          throw new BadRequestException(
+            'No se puede asignar como padre a un descendiente del animal (ciclo genealógico detectado).',
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Valida que la fecha de compra no sea anterior a la fecha de nacimiento.
+   */
+  private validarCronologia(
+    fechaNacimiento: string | null | undefined,
+    fechaCompra: string | null | undefined,
+  ): void {
+    if (!fechaNacimiento || !fechaCompra) return;
+
+    const nac = fechaNacimiento.slice(0, 10);
+    const comp = fechaCompra.slice(0, 10);
+
+    if (comp < nac) {
+      throw new BadRequestException(
+        'La fecha de compra no puede ser anterior a la fecha de nacimiento del animal.',
+      );
+    }
+  }
+
   async create(
     tenantId: string,
     createAnimalDto: CreateAnimalDto,
     manager: EntityManager,
   ) {
     const normalizado = this.normalizarOpcionales(createAnimalDto);
+
+    this.validarCronologia(
+      normalizado.fechaNacimiento as string | null | undefined,
+      normalizado.fechaCompra as string | null | undefined,
+    );
+
+    await this.validarGenealogia(
+      null,
+      tenantId,
+      normalizado.madreId as string | null | undefined,
+      normalizado.padreId as string | null | undefined,
+      manager,
+    );
 
     if (normalizado.areteInterno) {
       const existenteArete = await manager.findOne(Animal, {
@@ -169,6 +337,53 @@ export class AnimalesService {
   ) {
     const animal = await this.findOne(id, tenantId, manager);
     const normalizado = this.normalizarOpcionales(updateAnimalDto);
+
+    const fechaNacimientoEfectiva =
+      normalizado.fechaNacimiento !== undefined
+        ? (normalizado.fechaNacimiento as string | null | undefined)
+        : animal.fechaNacimiento;
+    const fechaCompraEfectiva =
+      normalizado.fechaCompra !== undefined
+        ? (normalizado.fechaCompra as string | null | undefined)
+        : animal.fechaCompra;
+
+    this.validarCronologia(fechaNacimientoEfectiva, fechaCompraEfectiva);
+
+    if (animal.fechaBaja) {
+      const baja = animal.fechaBaja.slice(0, 10);
+      if (
+        fechaNacimientoEfectiva &&
+        baja < fechaNacimientoEfectiva.slice(0, 10)
+      ) {
+        throw new BadRequestException(
+          'La fecha de nacimiento no puede ser posterior a la fecha de baja del animal.',
+        );
+      }
+      if (fechaCompraEfectiva && baja < fechaCompraEfectiva.slice(0, 10)) {
+        throw new BadRequestException(
+          'La fecha de compra no puede ser posterior a la fecha de baja del animal.',
+        );
+      }
+    }
+
+    if (normalizado.madreId !== undefined || normalizado.padreId !== undefined) {
+      const nuevaMadreId =
+        normalizado.madreId !== undefined
+          ? (normalizado.madreId as string | null | undefined)
+          : animal.madreId;
+      const nuevoPadreId =
+        normalizado.padreId !== undefined
+          ? (normalizado.padreId as string | null | undefined)
+          : animal.padreId;
+
+      await this.validarGenealogia(
+        id,
+        tenantId,
+        nuevaMadreId,
+        nuevoPadreId,
+        manager,
+      );
+    }
 
     if (
       normalizado.areteInterno &&
@@ -220,6 +435,21 @@ export class AnimalesService {
 
     if (!animal.activo) {
       throw new ConflictException('El animal ya está de baja.');
+    }
+
+    const bajaFecha = bajaDto.fechaBaja.slice(0, 10);
+    if (
+      animal.fechaNacimiento &&
+      bajaFecha < animal.fechaNacimiento.slice(0, 10)
+    ) {
+      throw new BadRequestException(
+        'La fecha de baja no puede ser anterior a la fecha de nacimiento del animal.',
+      );
+    }
+    if (animal.fechaCompra && bajaFecha < animal.fechaCompra.slice(0, 10)) {
+      throw new BadRequestException(
+        'La fecha de baja no puede ser anterior a la fecha de compra del animal.',
+      );
     }
 
     // Los campos opcionales se normalizan a null: las columnas son nullable, y
