@@ -866,6 +866,3 @@ describe('AnimalesService - Validaciones de Cronología (HATO-T004)', () => {
     expect(mockEntityManager.save).toHaveBeenCalled();
   });
 });
-
-
-

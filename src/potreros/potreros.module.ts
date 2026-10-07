@@ -14,4 +14,3 @@ import { EventoMovimiento } from './entities/evento-movimiento.entity.js';
   exports: [PotrerosService],
 })
 export class PotrerosModule {}
-

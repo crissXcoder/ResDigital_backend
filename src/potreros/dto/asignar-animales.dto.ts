@@ -25,4 +25,3 @@ export class AsignarAnimalesDto {
   @MaxLength(500)
   motivo?: string;
 }
-

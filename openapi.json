@@ -767,6 +767,62 @@
         ]
       }
     },
+    "/potreros/animal/{animalId}/movimientos": {
+      "get": {
+        "operationId": "PotrerosController_obtenerMovimientosAnimal",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Potreros"
+        ]
+      }
+    },
+    "/potreros/{id}/movimientos": {
+      "get": {
+        "operationId": "PotrerosController_obtenerMovimientosPotrero",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Potreros"
+        ]
+      }
+    },
     "/animales/{id}/servicios": {
       "post": {
         "description": "Registra un servicio (Inseminación Artificial o Monta Natural) y calcula los 5 hitos usando los días de gestación de la raza del animal, nunca una constante fija.",

@@ -217,4 +217,3 @@ describe('PotrerosController', () => {
     expect(result).toEqual(mockMovimientos);
   });
 });
-
