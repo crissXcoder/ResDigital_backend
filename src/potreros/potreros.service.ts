@@ -263,6 +263,7 @@ export class PotrerosService {
 
   private calcularEstadoPotrero(potrero: Potrero) {
     let uaTotal = 0;
+    const animalesCount = potrero.animales?.length || 0;
     potrero.animales?.forEach((a) => {
       if (['Vaca', 'Toro', 'Novillo mayor'].includes(a.categoria)) {
         uaTotal += 1.0;
@@ -271,44 +272,59 @@ export class PotrerosService {
       }
     });
 
-    // `area_ha` y `capacidad_recomendada_ua_ha` son `numeric` en Postgres, y
-    // TypeORM los devuelve como string para no perder precisión. Comparar un
-    // string con un número dependía de la coerción implícita de JavaScript, que
-    // en `>` funciona pero es frágil y silenciosa. Se convierte de forma
-    // explícita.
     const areaHa = Number.parseFloat(String(potrero.areaHa));
     const capacidadUaHa = Number.parseFloat(
       String(potrero.capacidadRecomendadaUaHa),
     );
 
     const cargaActualUaHa = areaHa > 0 ? uaTotal / areaHa : 0;
-    let estadoCalculado = 'DISPONIBLE';
 
-    if (potrero.estadoManual) {
-      estadoCalculado = potrero.estadoManual;
+    // 1. Dimensión de Carga: 100% matemática y no sobreescribible por inputs manuales
+    const sobrecargado = capacidadUaHa > 0 ? cargaActualUaHa > capacidadUaHa : cargaActualUaHa > 0;
+    let estadoCarga: 'SOBRECARGADO' | 'ÓPTIMO' | 'SIN_CARGA';
+    if (sobrecargado) {
+      estadoCarga = 'SOBRECARGADO';
+    } else if (animalesCount === 0) {
+      estadoCarga = 'SIN_CARGA';
     } else {
-      if (cargaActualUaHa > capacidadUaHa) {
-        estadoCalculado = 'SOBRECARGADO';
-      } else if (potrero.animales?.length === 0) {
-        if (potrero.fechaUltimoIngreso) {
-          const daysSince = Math.floor(
-            (new Date().getTime() -
-              new Date(potrero.fechaUltimoIngreso).getTime()) /
-              (1000 * 3600 * 24),
-          );
-          if (daysSince < potrero.diasDescansoRecomendados) {
-            estadoCalculado = 'EN RECUPERACIÓN';
-          }
-        }
-      }
+      estadoCarga = 'ÓPTIMO';
     }
+
+    // 2. Dimensión Operativa: ciclo de rotación y disponibilidad
+    let estadoOperativo: string;
+    if (potrero.estadoManual) {
+      estadoOperativo = potrero.estadoManual.trim().toUpperCase();
+    } else if (animalesCount > 0) {
+      estadoOperativo = 'OCUPADO';
+    } else if (potrero.fechaUltimoIngreso) {
+      const daysSince = Math.floor(
+        (new Date().getTime() -
+          new Date(potrero.fechaUltimoIngreso).getTime()) /
+          (1000 * 3600 * 24),
+      );
+      if (daysSince < potrero.diasDescansoRecomendados) {
+        estadoOperativo = 'EN RECUPERACIÓN';
+      } else {
+        estadoOperativo = 'DISPONIBLE';
+      }
+    } else {
+      estadoOperativo = 'DISPONIBLE';
+    }
+
+    // 3. Regla de Negocio Crítica (POT-T002 / MOD-05):
+    // El estado de sobrecarga derivado no puede ser anulado por ningún label manual.
+    // Si el potrero está sobrecargado, estadoCalculado devuelve 'SOBRECARGADO'.
+    const estadoCalculado = sobrecargado ? 'SOBRECARGADO' : estadoOperativo;
 
     return {
       ...potrero,
       cargaActualUaHa: Number(cargaActualUaHa.toFixed(2)),
       uaTotal,
       estadoCalculado,
-      animalesAsignadosCount: potrero.animales?.length || 0,
+      estadoCarga,
+      estadoOperativo,
+      sobrecargado,
+      animalesAsignadosCount: animalesCount,
     };
   }
 }

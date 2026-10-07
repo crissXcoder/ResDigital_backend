@@ -239,3 +239,131 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
     ).rejects.toThrow(BadRequestException);
   });
 });
+
+describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (POT-T002)', () => {
+  let service: PotrerosService;
+  const TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
+  beforeEach(() => {
+    service = new PotrerosService();
+  });
+
+  it('adversarial: un estadoManual de "DISPONIBLE" no debe ocultar la alerta si el potrero está sobrecargado', async () => {
+    // 5 vacas (5 UA) en 1 ha con capacidad de 2 UA/ha -> sobrecargado (5 > 2)
+    const potreroSobrecargado = {
+      id: 'potrero-1',
+      tenantId: TENANT_ID,
+      nombre: 'Potrero El Alto',
+      areaHa: 1,
+      capacidadRecomendadaUaHa: 2,
+      diasDescansoRecomendados: 30,
+      estadoManual: 'DISPONIBLE',
+      animales: [
+        { id: '1', categoria: 'Vaca' },
+        { id: '2', categoria: 'Vaca' },
+        { id: '3', categoria: 'Vaca' },
+        { id: '4', categoria: 'Vaca' },
+        { id: '5', categoria: 'Vaca' },
+      ],
+    } as unknown as Potrero;
+
+    const mockManager = {
+      getRepository: vi.fn().mockReturnValue({
+        findOne: vi.fn().mockResolvedValue(potreroSobrecargado),
+      }),
+    } as unknown as EntityManager;
+
+    const resultado = await service.findOne('potrero-1', TENANT_ID, mockManager);
+
+    // Verificación de invariantes POT-T002
+    expect(resultado.sobrecargado).toBe(true);
+    expect(resultado.estadoCarga).toBe('SOBRECARGADO');
+    expect(resultado.estadoOperativo).toBe('DISPONIBLE');
+    // El label manual no debe ocultar la alerta; estadoCalculado se reporta como SOBRECARGADO
+    expect(resultado.estadoCalculado).toBe('SOBRECARGADO');
+    expect(resultado.cargaActualUaHa).toBe(5);
+  });
+
+  it('calcula estadoCarga como "ÓPTIMO" cuando la carga está dentro de la capacidad recomendada', async () => {
+    // 1 vaca (1 UA) en 2 ha con capacidad de 1.5 UA/ha -> carga 0.5 <= 1.5
+    const potreroOptimo = {
+      id: 'potrero-2',
+      tenantId: TENANT_ID,
+      nombre: 'Potrero El Valle',
+      areaHa: 2,
+      capacidadRecomendadaUaHa: 1.5,
+      diasDescansoRecomendados: 30,
+      estadoManual: null,
+      animales: [{ id: '1', categoria: 'Vaca' }],
+    } as unknown as Potrero;
+
+    const mockManager = {
+      getRepository: vi.fn().mockReturnValue({
+        findOne: vi.fn().mockResolvedValue(potreroOptimo),
+      }),
+    } as unknown as EntityManager;
+
+    const resultado = await service.findOne('potrero-2', TENANT_ID, mockManager);
+
+    expect(resultado.sobrecargado).toBe(false);
+    expect(resultado.estadoCarga).toBe('ÓPTIMO');
+    expect(resultado.estadoOperativo).toBe('OCUPADO');
+    expect(resultado.estadoCalculado).toBe('OCUPADO');
+    expect(resultado.cargaActualUaHa).toBe(0.5);
+  });
+
+  it('deriva estadoOperativo como "EN RECUPERACIÓN" si no tiene animales y no ha cumplido el descanso', async () => {
+    // Hace 5 días que ingresó / descansando, requiere 30 días
+    const fechaReciente = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    const potreroEnDescanso = {
+      id: 'potrero-3',
+      tenantId: TENANT_ID,
+      nombre: 'Potrero Descanso',
+      areaHa: 5,
+      capacidadRecomendadaUaHa: 2,
+      diasDescansoRecomendados: 30,
+      fechaUltimoIngreso: fechaReciente,
+      estadoManual: null,
+      animales: [],
+    } as unknown as Potrero;
+
+    const mockManager = {
+      getRepository: vi.fn().mockReturnValue({
+        findOne: vi.fn().mockResolvedValue(potreroEnDescanso),
+      }),
+    } as unknown as EntityManager;
+
+    const resultado = await service.findOne('potrero-3', TENANT_ID, mockManager);
+
+    expect(resultado.sobrecargado).toBe(false);
+    expect(resultado.estadoCarga).toBe('SIN_CARGA');
+    expect(resultado.estadoOperativo).toBe('EN RECUPERACIÓN');
+    expect(resultado.estadoCalculado).toBe('EN RECUPERACIÓN');
+  });
+
+  it('respeta estadoManual (ej. "EN MANTENIMIENTO") en estadoOperativo cuando no hay sobrecarga', async () => {
+    const potreroMantenimiento = {
+      id: 'potrero-4',
+      tenantId: TENANT_ID,
+      nombre: 'Potrero Cercas',
+      areaHa: 5,
+      capacidadRecomendadaUaHa: 2,
+      diasDescansoRecomendados: 30,
+      estadoManual: 'EN MANTENIMIENTO',
+      animales: [],
+    } as unknown as Potrero;
+
+    const mockManager = {
+      getRepository: vi.fn().mockReturnValue({
+        findOne: vi.fn().mockResolvedValue(potreroMantenimiento),
+      }),
+    } as unknown as EntityManager;
+
+    const resultado = await service.findOne('potrero-4', TENANT_ID, mockManager);
+
+    expect(resultado.sobrecargado).toBe(false);
+    expect(resultado.estadoCarga).toBe('SIN_CARGA');
+    expect(resultado.estadoOperativo).toBe('EN MANTENIMIENTO');
+    expect(resultado.estadoCalculado).toBe('EN MANTENIMIENTO');
+  });
+});
