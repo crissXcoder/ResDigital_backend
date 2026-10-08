@@ -565,4 +565,3 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
     expect(resultado.animales?.[1]).toMatchObject({ uaCalculada: 0.5, metodoCalculoUa: 'CATEGORIA' });
   });
 });
-
