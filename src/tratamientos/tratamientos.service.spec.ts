@@ -511,6 +511,45 @@ describe('TratamientosService', () => {
     });
   });
 
+  describe('documento adjunto', () => {
+    const ruta = `${TENANT_ID}/${ANIMAL_ID}/tratamiento/00000000-0000-4000-8000-0000000000d1.pdf`;
+    const publica = 'https://x.supabase.co/storage/v1/object/public/documentos/tratamientos/a.pdf';
+
+    it('guarda la ruta privada de la finca y del animal', async () => {
+      findOne.mockResolvedValueOnce(animal);
+      const result = await service.create(
+        TENANT_ID,
+        USER_ID,
+        { animalId: ANIMAL_ID, ...datos, documentoUrl: ruta },
+        manager,
+      );
+      expect(result.documentoUrl).toBe(ruta);
+    });
+
+    it('rechaza una URL pública nueva (400) sin crear eventos', async () => {
+      findOne.mockResolvedValueOnce(animal);
+      await expect(
+        service.create(TENANT_ID, USER_ID, { animalId: ANIMAL_ID, ...datos, documentoUrl: publica }, manager),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('al corregir conserva la URL heredada del original', async () => {
+      findOne
+        .mockResolvedValueOnce({ id: 'orig-1', tenantId: TENANT_ID, animalId: ANIMAL_ID, tipo: 'TRATAMIENTO', revertido: false })
+        .mockResolvedValueOnce({ eventoId: 'orig-1', documentoUrl: publica })
+        .mockResolvedValueOnce(animal);
+      const result = await service.corregir(
+        TENANT_ID,
+        USER_ID,
+        'orig-1',
+        { ...datos, documentoUrl: publica },
+        manager,
+      );
+      expect(result.documentoUrl).toBe(publica);
+    });
+  });
+
   describe('consultas', () => {
     it('findAllByAnimal filtra vigentes del tenant y ordena por fecha desc', async () => {
       findOne.mockResolvedValueOnce(animal);

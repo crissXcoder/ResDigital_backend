@@ -29,6 +29,7 @@ import {
   type EstadoSanitarioResult,
 } from './retiro-calc.js';
 import { validarCompatibilidadSexo } from './compatibilidad-sexo.js';
+import { validarDocumentoTratamiento } from './documento-tratamiento.js';
 
 export interface AnulacionResponse {
   id: string;
@@ -149,7 +150,7 @@ export class TratamientosService {
     manager: EntityManager,
   ): Promise<TratamientoResponseDto> {
     return manager.transaction(async (trx) => {
-      const original = await this.bloquearVigente(trx, tenantId, id);
+      const { evento: original, detalle } = await this.bloquearVigente(trx, tenantId, id);
       const animal = await this.assertAnimal(tenantId, original.animalId, trx);
       original.revertido = true;
       await trx.save(Evento, original);
@@ -160,6 +161,7 @@ export class TratamientosService {
         animal,
         dto,
         original.id,
+        detalle.documentoUrl,
       );
     });
   }
@@ -172,7 +174,7 @@ export class TratamientosService {
     manager: EntityManager,
   ): Promise<AnulacionResponse> {
     return manager.transaction(async (trx) => {
-      const original = await this.bloquearVigente(trx, tenantId, id);
+      const { evento: original } = await this.bloquearVigente(trx, tenantId, id);
       original.revertido = true;
       await trx.save(Evento, original);
       const anulacion = await trx.save(
@@ -203,6 +205,7 @@ export class TratamientosService {
     animal: Animal,
     datos: DatosTratamientoDto,
     eventoCorrigeId: string | null,
+    documentoPrevio: string | null = null,
   ): Promise<TratamientoResponseDto> {
     const animalId = animal.id;
     const errorFechas = validarFechasTratamiento({
@@ -211,6 +214,14 @@ export class TratamientosService {
       hoy: todayIsoDate(),
     });
     if (errorFechas) throw new BadRequestException(errorFechas);
+    const documento = datos.documentoUrl?.trim() || null;
+    const errorDocumento = validarDocumentoTratamiento({
+      documento,
+      documentoPrevio,
+      tenantId,
+      animalId,
+    });
+    if (errorDocumento) throw new BadRequestException(errorDocumento);
 
     const producto = await this.resolverProducto(trx, tenantId, datos);
     const diagnostico = await this.resolverDiagnostico(trx, tenantId, datos);
@@ -259,7 +270,7 @@ export class TratamientosService {
         diasRetiroCarne: retiros.diasRetiroCarne,
         fechaLiberacionLeche: retiros.fechaLiberacionLeche,
         fechaLiberacionCarne: retiros.fechaLiberacionCarne,
-        documentoUrl: datos.documentoUrl ?? null,
+        documentoUrl: documento,
       }),
     );
 
@@ -335,7 +346,7 @@ export class TratamientosService {
     trx: EntityManager,
     tenantId: string,
     id: string,
-  ): Promise<Evento> {
+  ): Promise<{ evento: Evento; detalle: EventoTratamiento }> {
     const original = await trx.findOne(Evento, {
       where: { id, tenantId, tipo: 'TRATAMIENTO' },
       lock: { mode: 'pessimistic_write' },
@@ -351,7 +362,7 @@ export class TratamientosService {
         `El tratamiento '${id}' ya fue corregido o anulado.`,
       );
     }
-    return original;
+    return { evento: original, detalle };
   }
 
   private async assertAnimal(
