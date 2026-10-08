@@ -66,7 +66,8 @@ export function calcularUaAnimal(animal: {
   }
 
   const categoria = animal.categoria?.trim() || '';
-  const factor = FACTORES_UA_POR_CATEGORIA[categoria] ?? FACTOR_UA_FALLBACK_DEFAULT;
+  const factor =
+    FACTORES_UA_POR_CATEGORIA[categoria] ?? FACTOR_UA_FALLBACK_DEFAULT;
 
   return {
     ua: factor,
