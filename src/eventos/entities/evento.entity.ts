@@ -19,7 +19,8 @@ export type TipoEvento =
   | 'INICIO_LACTANCIA'
   | 'FIN_LACTANCIA'
   | 'MOVIMIENTO'
-  | 'MUERTE';
+  | 'MUERTE'
+  | 'BAJA';
 
 @Entity('evento')
 export class Evento {

@@ -13,7 +13,10 @@ const mockPotrerosService = {
   update: vi.fn(),
   remove: vi.fn(),
   asignarAnimales: vi.fn(),
+  obtenerMovimientosPotrero: vi.fn(),
+  obtenerMovimientosAnimal: vi.fn(),
 };
+
 
 const mockEntityManager = {} as EntityManager;
 
@@ -144,19 +147,73 @@ describe('PotrerosController', () => {
   it('should asignar animales using CurrentEntityManager', async () => {
     mockPotrerosService.asignarAnimales.mockResolvedValue({ id: '123' });
 
+    const dto = { animalIds: ['a1'], fecha: '2026-10-06', motivo: 'Rotación' };
     const result = await controller.asignarAnimales(
       mockRequest,
       '123',
-      { animalIds: ['a1'] },
+      dto,
       mockEntityManager,
     );
 
     expect(service.asignarAnimales).toHaveBeenCalledWith(
       '123',
       TENANT_ID,
-      ['a1'],
+      mockRequest.userId,
+      dto,
       mockEntityManager,
     );
     expect(result).toEqual({ id: '123' });
+  });
+
+  it('should get movimientos of a potrero using CurrentEntityManager', async () => {
+    const mockMovimientos = [
+      {
+        id: 'ev-1',
+        tipo: 'INGRESO',
+        fechaEvento: '2026-10-06',
+        animal: { id: 'a1', areteInterno: '001', nombre: 'Parda' },
+        potreroOrigen: null,
+        potreroDestino: { id: '123', nombre: 'Potrero 1' },
+      },
+    ];
+    mockPotrerosService.obtenerMovimientosPotrero.mockResolvedValue(mockMovimientos);
+
+    const result = await controller.obtenerMovimientosPotrero(
+      mockRequest,
+      '123',
+      mockEntityManager,
+    );
+
+    expect(service.obtenerMovimientosPotrero).toHaveBeenCalledWith(
+      '123',
+      TENANT_ID,
+      mockEntityManager,
+    );
+    expect(result).toEqual(mockMovimientos);
+  });
+
+  it('should get movimientos of an animal using CurrentEntityManager', async () => {
+    const mockMovimientos = [
+      {
+        id: 'ev-1',
+        fechaEvento: '2026-10-06',
+        potreroOrigen: null,
+        potreroDestino: { id: '123', nombre: 'Potrero 1' },
+      },
+    ];
+    mockPotrerosService.obtenerMovimientosAnimal.mockResolvedValue(mockMovimientos);
+
+    const result = await controller.obtenerMovimientosAnimal(
+      mockRequest,
+      'animal-1',
+      mockEntityManager,
+    );
+
+    expect(service.obtenerMovimientosAnimal).toHaveBeenCalledWith(
+      'animal-1',
+      TENANT_ID,
+      mockEntityManager,
+    );
+    expect(result).toEqual(mockMovimientos);
   });
 });
