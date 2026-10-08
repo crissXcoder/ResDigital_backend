@@ -54,7 +54,9 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
 
     const eventosGuardados: Evento[] = [];
     const mockRepoEvento = {
-      create: vi.fn().mockImplementation((dto) => ({ id: 'evento-101', ...dto })),
+      create: vi
+        .fn()
+        .mockImplementation((dto) => ({ id: 'evento-101', ...dto })),
       save: vi.fn().mockImplementation((e) => {
         eventosGuardados.push(e);
         return Promise.resolve(e);
@@ -273,7 +275,11 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-1', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-1',
+      TENANT_ID,
+      mockManager,
+    );
 
     // Verificación de invariantes POT-T002
     expect(resultado.sobrecargado).toBe(true);
@@ -303,7 +309,11 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-2', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-2',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.sobrecargado).toBe(false);
     expect(resultado.estadoCarga).toBe('ÓPTIMO');
@@ -314,7 +324,9 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
 
   it('deriva estadoOperativo como "EN RECUPERACIÓN" si no tiene animales y no ha cumplido el descanso', async () => {
     // Hace 5 días que ingresó / descansando, requiere 30 días
-    const fechaReciente = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    const fechaReciente = new Date(Date.now() - 5 * 24 * 3600 * 1000)
+      .toISOString()
+      .split('T')[0];
     const potreroEnDescanso = {
       id: 'potrero-3',
       tenantId: TENANT_ID,
@@ -333,7 +345,11 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-3', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-3',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.sobrecargado).toBe(false);
     expect(resultado.estadoCarga).toBe('SIN_CARGA');
@@ -359,7 +375,11 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-4', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-4',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.sobrecargado).toBe(false);
     expect(resultado.estadoCarga).toBe('SIN_CARGA');
@@ -402,7 +422,11 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-cat', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-cat',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.uaTotal).toBe(5.05);
     expect(resultado.desgloseUa).toEqual({
@@ -417,10 +441,16 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
 
     // Cada animal enriquecido con su UA calculada y método
     const toro = resultado.animales?.find((a) => a.id === '1');
-    expect(toro).toMatchObject({ uaCalculada: 1.25, metodoCalculoUa: 'CATEGORIA' });
+    expect(toro).toMatchObject({
+      uaCalculada: 1.25,
+      metodoCalculoUa: 'CATEGORIA',
+    });
 
     const ternero = resultado.animales?.find((a) => a.id === '7');
-    expect(ternero).toMatchObject({ uaCalculada: 0.35, metodoCalculoUa: 'CATEGORIA' });
+    expect(ternero).toMatchObject({
+      uaCalculada: 0.35,
+      metodoCalculoUa: 'CATEGORIA',
+    });
   });
 
   it('calcula UA por biomasa real (pesoActualKg / 450) cuando el animal tiene peso registrado', async () => {
@@ -447,7 +477,11 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-pesos', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-pesos',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.uaTotal).toBe(2.8);
     expect(resultado.desgloseUa).toEqual({
@@ -459,10 +493,16 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
     expect(resultado.cargaActualUaHa).toBe(1.4);
 
     const animal1 = resultado.animales?.find((a) => a.id === 't1');
-    expect(animal1).toMatchObject({ uaCalculada: 1.3, metodoCalculoUa: 'PESO' });
+    expect(animal1).toMatchObject({
+      uaCalculada: 1.3,
+      metodoCalculoUa: 'PESO',
+    });
 
     const animal3 = resultado.animales?.find((a) => a.id === 'c1');
-    expect(animal3).toMatchObject({ uaCalculada: 0.5, metodoCalculoUa: 'PESO' });
+    expect(animal3).toMatchObject({
+      uaCalculada: 0.5,
+      metodoCalculoUa: 'PESO',
+    });
   });
 
   it('soporta cálculo híbrido combinando animales pesados y sin pesar en el mismo potrero', async () => {
@@ -487,7 +527,11 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-hib', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-hib',
+      TENANT_ID,
+      mockManager,
+    );
 
     expect(resultado.uaTotal).toBe(2.2);
     expect(resultado.desgloseUa).toEqual({
@@ -521,7 +565,11 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-adv', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-adv',
+      TENANT_ID,
+      mockManager,
+    );
 
     // Suma esperada = 1.0 + 1.25 + 0.7 = 2.95 UA
     expect(resultado.uaTotal).toBe(2.95);
@@ -529,13 +577,22 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
     expect(resultado.desgloseUa?.porPeso).toBe(0);
 
     const a0 = resultado.animales?.find((a) => a.id === 'p0');
-    expect(a0).toMatchObject({ uaCalculada: 1.0, metodoCalculoUa: 'CATEGORIA' });
+    expect(a0).toMatchObject({
+      uaCalculada: 1.0,
+      metodoCalculoUa: 'CATEGORIA',
+    });
 
     const aNeg = resultado.animales?.find((a) => a.id === 'pNeg');
-    expect(aNeg).toMatchObject({ uaCalculada: 1.25, metodoCalculoUa: 'CATEGORIA' });
+    expect(aNeg).toMatchObject({
+      uaCalculada: 1.25,
+      metodoCalculoUa: 'CATEGORIA',
+    });
 
     const aAbs = resultado.animales?.find((a) => a.id === 'pAbsurdo');
-    expect(aAbs).toMatchObject({ uaCalculada: 0.7, metodoCalculoUa: 'CATEGORIA' });
+    expect(aAbs).toMatchObject({
+      uaCalculada: 0.7,
+      metodoCalculoUa: 'CATEGORIA',
+    });
   });
 
   it('adversarial: categorías desconocidas o no catalogadas usan fallback seguro de 0.50 UA', async () => {
@@ -557,12 +614,21 @@ describe('PotrerosService - Cálculo UA Configurable (POT-T003)', () => {
       }),
     } as unknown as EntityManager;
 
-    const resultado = await service.findOne('potrero-desc', TENANT_ID, mockManager);
+    const resultado = await service.findOne(
+      'potrero-desc',
+      TENANT_ID,
+      mockManager,
+    );
 
     // Fallback: 0.5 + 0.5 = 1.0 UA
     expect(resultado.uaTotal).toBe(1.0);
-    expect(resultado.animales?.[0]).toMatchObject({ uaCalculada: 0.5, metodoCalculoUa: 'CATEGORIA' });
-    expect(resultado.animales?.[1]).toMatchObject({ uaCalculada: 0.5, metodoCalculoUa: 'CATEGORIA' });
+    expect(resultado.animales?.[0]).toMatchObject({
+      uaCalculada: 0.5,
+      metodoCalculoUa: 'CATEGORIA',
+    });
+    expect(resultado.animales?.[1]).toMatchObject({
+      uaCalculada: 0.5,
+      metodoCalculoUa: 'CATEGORIA',
+    });
   });
 });
-

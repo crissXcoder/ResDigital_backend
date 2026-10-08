@@ -261,7 +261,6 @@ export class PotrerosService {
     }));
   }
 
-
   private calcularEstadoPotrero(potrero: Potrero) {
     let uaTotal = 0;
     let uaPorPeso = 0;
@@ -296,7 +295,8 @@ export class PotrerosService {
     const cargaActualUaHa = areaHa > 0 ? uaTotal / areaHa : 0;
 
     // 1. Dimensión de Carga: 100% matemática y no sobreescribible por inputs manuales
-    const sobrecargado = capacidadUaHa > 0 ? cargaActualUaHa > capacidadUaHa : cargaActualUaHa > 0;
+    const sobrecargado =
+      capacidadUaHa > 0 ? cargaActualUaHa > capacidadUaHa : cargaActualUaHa > 0;
     let estadoCarga: 'SOBRECARGADO' | 'ÓPTIMO' | 'SIN_CARGA';
     if (sobrecargado) {
       estadoCarga = 'SOBRECARGADO';
