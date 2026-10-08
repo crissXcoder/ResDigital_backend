@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { EntityManager } from 'typeorm';
 import { PesajesService } from './pesajes.service.js';
@@ -8,7 +8,7 @@ import { Roles } from '../auth/decorators/roles.decorator.js';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.js';
 import { CreatePesajeDto } from './dto/create-pesaje.dto.js';
 
-@ApiTags('Pesajes y Producción de Leche')
+@ApiTags('Pesajes')
 @ApiBearerAuth()
 @Controller('pesajes')
 export class PesajesController {
@@ -26,7 +26,7 @@ export class PesajesController {
 
   @Get('animal/:animalId')
   findAllByAnimal(
-    @Param('animalId') animalId: string,
+    @Param('animalId', ParseUUIDPipe) animalId: string,
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
   ) {

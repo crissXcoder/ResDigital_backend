@@ -13,6 +13,7 @@ import { TratamientosModule } from './tratamientos/tratamientos.module.js';
 import { SanitaryModule } from './sanitary/sanitary.module.js';
 import { PotrerosModule } from './potreros/potreros.module.js';
 import { ReproductivoModule } from './reproductivo/reproductivo.module.js';
+import { ProduccionModule } from './produccion/produccion.module.js';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { ReproductivoModule } from './reproductivo/reproductivo.module.js';
     SanitaryModule,
     PotrerosModule,
     ReproductivoModule,
+    ProduccionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

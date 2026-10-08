@@ -1,6 +1,10 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Animal } from '../../animales/entities/animal.entity.js';
 
+/**
+ * Solo peso. Las columnas `leche_manana_l` y `leche_tarde_l` siguen en la tabla
+ * como historia migrada a `evento_produccion_leche`; ya no se leen ni escriben.
+ */
 @Entity('pesaje')
 export class Pesaje {
   @PrimaryGeneratedColumn('uuid')
@@ -21,12 +25,6 @@ export class Pesaje {
 
   @Column({ name: 'peso_actual_kg', type: 'numeric', precision: 6, scale: 1, nullable: true })
   pesoActualKg: number;
-
-  @Column({ name: 'leche_manana_l', type: 'numeric', precision: 5, scale: 1, nullable: true })
-  lecheMananaL: number;
-
-  @Column({ name: 'leche_tarde_l', type: 'numeric', precision: 5, scale: 1, nullable: true })
-  lecheTardeL: number;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

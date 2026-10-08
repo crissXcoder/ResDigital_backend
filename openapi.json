@@ -398,7 +398,7 @@
           }
         ],
         "tags": [
-          "Pesajes y Producción de Leche"
+          "Pesajes"
         ]
       }
     },
@@ -426,7 +426,7 @@
           }
         ],
         "tags": [
-          "Pesajes y Producción de Leche"
+          "Pesajes"
         ]
       }
     },
@@ -1214,6 +1214,345 @@
           "Reproductivo"
         ]
       }
+    },
+    "/produccion-leche": {
+      "post": {
+        "operationId": "ProduccionLecheController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProduccionLecheDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProduccionLecheResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
+    "/produccion-leche/resumen": {
+      "get": {
+        "operationId": "ProduccionLecheController_resumen",
+        "parameters": [
+          {
+            "name": "desde",
+            "required": false,
+            "in": "query",
+            "description": "Inicio del rango (YYYY-MM-DD). Por defecto, 29 días antes de `hasta`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hasta",
+            "required": false,
+            "in": "query",
+            "description": "Fin del rango (YYYY-MM-DD). Por defecto, hoy en la zona horaria de la finca.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumenProduccionDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
+    "/produccion-leche/animal/{animalId}": {
+      "get": {
+        "operationId": "ProduccionLecheController_findAllByAnimal",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProduccionLecheResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
+    "/produccion-leche/{id}/anulacion": {
+      "post": {
+        "operationId": "ProduccionLecheController_anular",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnularProduccionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnulacionProduccionResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
+    "/lactancia/activas": {
+      "get": {
+        "operationId": "LactanciaController_getActivas",
+        "parameters": [
+          {
+            "name": "fecha",
+            "required": false,
+            "in": "query",
+            "description": "Fecha de referencia (YYYY-MM-DD). Por defecto, hoy en la zona horaria de la finca.",
+            "schema": {
+              "example": "2026-10-06",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HembraEnLactanciaDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Lactancia"
+        ]
+      }
+    },
+    "/lactancia/animal/{animalId}": {
+      "get": {
+        "operationId": "LactanciaController_getEstado",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fecha",
+            "required": false,
+            "in": "query",
+            "description": "Fecha de referencia (YYYY-MM-DD). Por defecto, hoy en la zona horaria de la finca.",
+            "schema": {
+              "example": "2026-10-06",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstadoLactanciaDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Lactancia"
+        ]
+      }
+    },
+    "/lactancia/animal/{animalId}/inicio": {
+      "post": {
+        "operationId": "LactanciaController_registrarInicio",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarEventoLactanciaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventoLactanciaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Lactancia"
+        ]
+      }
+    },
+    "/lactancia/animal/{animalId}/fin": {
+      "post": {
+        "operationId": "LactanciaController_registrarFin",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarEventoLactanciaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventoLactanciaResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Lactancia"
+        ]
+      }
     }
   },
   "info": {
@@ -1360,7 +1699,28 @@
       },
       "CreatePesajeDto": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fecha": {
+            "type": "string",
+            "description": "Fecha del pesaje (YYYY-MM-DD). No puede ser futura.",
+            "example": "2026-10-06"
+          },
+          "pesoActualKg": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 2000,
+            "example": 485
+          }
+        },
+        "required": [
+          "animalId",
+          "fecha",
+          "pesoActualKg"
+        ]
       },
       "CreateTratamientoDto": {
         "type": "object",
@@ -2334,6 +2694,335 @@
           "fecha",
           "diasRestantes",
           "urgente"
+        ]
+      },
+      "CreateProduccionLecheDto": {
+        "type": "object",
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fecha": {
+            "type": "string",
+            "description": "Fecha del ordeño (YYYY-MM-DD). No puede ser futura.",
+            "example": "2026-10-06"
+          },
+          "turno": {
+            "type": "string",
+            "enum": [
+              "MANANA",
+              "TARDE"
+            ]
+          },
+          "litros": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 60,
+            "example": 12.5
+          },
+          "notas": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "animalId",
+          "fecha",
+          "turno",
+          "litros"
+        ]
+      },
+      "ProduccionLecheResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-06"
+          },
+          "turno": {
+            "type": "string",
+            "enum": [
+              "MANANA",
+              "TARDE"
+            ]
+          },
+          "litros": {
+            "type": "number",
+            "example": 12.5
+          },
+          "disposicion": {
+            "type": "string",
+            "enum": [
+              "COMERCIALIZABLE",
+              "DESCARTE"
+            ]
+          },
+          "tratamientoEventoId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "Tratamiento cuyo retiro de leche originó el descarte."
+          },
+          "fechaLiberacionLeche": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-10-09"
+          },
+          "revertido": {
+            "type": "boolean"
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "notas": {
+            "type": "string",
+            "nullable": true
+          },
+          "fechaRegistro": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "animalId",
+          "fecha",
+          "turno",
+          "litros",
+          "disposicion",
+          "tratamientoEventoId",
+          "fechaLiberacionLeche",
+          "revertido",
+          "usuarioId",
+          "notas",
+          "fechaRegistro"
+        ]
+      },
+      "ResumenProduccionDiaDto": {
+        "type": "object",
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-06"
+          },
+          "litrosProducidos": {
+            "type": "number"
+          },
+          "litrosComercializables": {
+            "type": "number"
+          },
+          "litrosDescarte": {
+            "type": "number"
+          },
+          "registros": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "fecha",
+          "litrosProducidos",
+          "litrosComercializables",
+          "litrosDescarte",
+          "registros"
+        ]
+      },
+      "ResumenProduccionDto": {
+        "type": "object",
+        "properties": {
+          "desde": {
+            "type": "string",
+            "example": "2026-09-07"
+          },
+          "hasta": {
+            "type": "string",
+            "example": "2026-10-06"
+          },
+          "litrosProducidos": {
+            "type": "number"
+          },
+          "litrosComercializables": {
+            "type": "number"
+          },
+          "litrosDescarte": {
+            "type": "number"
+          },
+          "registros": {
+            "type": "number"
+          },
+          "porFecha": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResumenProduccionDiaDto"
+            }
+          }
+        },
+        "required": [
+          "desde",
+          "hasta",
+          "litrosProducidos",
+          "litrosComercializables",
+          "litrosDescarte",
+          "registros",
+          "porFecha"
+        ]
+      },
+      "AnularProduccionDto": {
+        "type": "object",
+        "properties": {
+          "motivo": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "motivo"
+        ]
+      },
+      "AnulacionProduccionResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventoAnulacionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "motivo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventoAnulacionId",
+          "motivo"
+        ]
+      },
+      "HembraEnLactanciaDto": {
+        "type": "object",
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "arete": {
+            "type": "string"
+          },
+          "nombre": {
+            "type": "string"
+          },
+          "fechaInicio": {
+            "type": "string",
+            "example": "2026-08-01"
+          }
+        },
+        "required": [
+          "animalId",
+          "arete",
+          "nombre",
+          "fechaInicio"
+        ]
+      },
+      "EstadoLactanciaDto": {
+        "type": "object",
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "enLactancia": {
+            "type": "boolean"
+          },
+          "fechaInicio": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-08-01"
+          },
+          "eventoInicioId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "fechaReferencia": {
+            "type": "string",
+            "example": "2026-10-06"
+          }
+        },
+        "required": [
+          "animalId",
+          "enLactancia",
+          "fechaInicio",
+          "eventoInicioId",
+          "fechaReferencia"
+        ]
+      },
+      "RegistrarEventoLactanciaDto": {
+        "type": "object",
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "description": "Fecha del evento (YYYY-MM-DD). No puede ser futura.",
+            "example": "2026-09-01"
+          },
+          "notas": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "fecha"
+        ]
+      },
+      "EventoLactanciaResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "INICIO_LACTANCIA",
+              "FIN_LACTANCIA"
+            ]
+          },
+          "fecha": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "notas": {
+            "type": "string",
+            "nullable": true
+          },
+          "usuarioId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "animalId",
+          "tipo",
+          "fecha",
+          "notas",
+          "usuarioId"
         ]
       }
     }
