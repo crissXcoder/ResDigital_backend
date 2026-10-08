@@ -7,12 +7,17 @@ import {
   ManyToOne,
   JoinColumn,
   Unique,
+  Index,
 } from 'typeorm';
 import { CatalogoRaza } from '../../catalogos/entities/catalogo-raza.entity.js';
 import { Potrero } from '../../potreros/entities/potrero.entity.js';
 
 @Entity('animal')
 @Unique(['tenantId', 'areteInterno'])
+@Index(['tenantId', 'numeroOficialDiio'], {
+  unique: true,
+  where: 'numero_oficial_diio IS NOT NULL',
+})
 export class Animal {
   @PrimaryGeneratedColumn('uuid')
   id: string;

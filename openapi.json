@@ -273,6 +273,36 @@
         "tags": [
           "Animales"
         ]
+      },
+      "get": {
+        "operationId": "AnimalesController_getBaja",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evento histórico de baja del animal"
+          },
+          "404": {
+            "description": "Animal no encontrado o sin registro de baja"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar el evento de baja histórico del animal",
+        "tags": [
+          "Animales"
+        ]
       }
     },
     "/animales/{id}/documentos": {
@@ -754,6 +784,62 @@
         },
         "responses": {
           "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Potreros"
+        ]
+      }
+    },
+    "/potreros/animal/{animalId}/movimientos": {
+      "get": {
+        "operationId": "PotrerosController_obtenerMovimientosAnimal",
+        "parameters": [
+          {
+            "name": "animalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Potreros"
+        ]
+      }
+    },
+    "/potreros/{id}/movimientos": {
+      "get": {
+        "operationId": "PotrerosController_obtenerMovimientosPotrero",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": ""
           }
         },
