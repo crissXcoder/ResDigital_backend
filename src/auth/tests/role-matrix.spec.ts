@@ -6,6 +6,8 @@ import { PesajesController } from '../../pesajes/pesajes.controller.js';
 import { TratamientosController } from '../../tratamientos/tratamientos.controller.js';
 import { ReproductiveController } from '../../reproductivo/reproductive.controller.js';
 import { AnimalesController } from '../../animales/animales.controller.js';
+import { ProduccionLecheController } from '../../produccion/produccion-leche.controller.js';
+import { LactanciaController } from '../../produccion/lactancia.controller.js';
 import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { RolesGuard } from '../guards/roles.guard.js';
@@ -41,7 +43,10 @@ describe('Matriz de roles en rutas de escritura', () => {
     expect(rolesOf(TratamientosController.prototype, 'create')).toContain(
       'peon',
     );
-    expect(rolesOf(TratamientosController.prototype, 'update')).not.toContain(
+    expect(rolesOf(TratamientosController.prototype, 'corregir')).not.toContain(
+      'peon',
+    );
+    expect(rolesOf(TratamientosController.prototype, 'anular')).not.toContain(
       'peon',
     );
     expect(rolesOf(ReproductiveController.prototype, 'registrarServicio')).toContain(
@@ -56,6 +61,23 @@ describe('Matriz de roles en rutas de escritura', () => {
     expect(rolesOf(ReproductiveController.prototype, 'registrarSecado')).toContain(
       'peon',
     );
+  });
+
+  it('permite al peón registrar producción, pero no anularla ni cambiar la lactancia', () => {
+    expect(rolesOf(ProduccionLecheController.prototype, 'create')).toContain(
+      'peon',
+    );
+    expect(rolesOf(ProduccionLecheController.prototype, 'anular')).not.toContain(
+      'peon',
+    );
+    expect(rolesOf(LactanciaController.prototype, 'registrarInicio')).toEqual([
+      'propietario',
+      'administrador',
+    ]);
+    expect(rolesOf(LactanciaController.prototype, 'registrarFin')).toEqual([
+      'propietario',
+      'administrador',
+    ]);
   });
 
   it('reserva la carga de documentos al propietario y administrador', () => {

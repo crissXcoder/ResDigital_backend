@@ -9,9 +9,11 @@ import type { EntityManager } from 'typeorm';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { CurrentEntityManager } from '../auth/decorators/current-entity-manager.decorator.js';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface.js';
-import { SanitaryService } from './sanitary.service.js';
-import type { Medicamento } from './entities/medicamento.entity.js';
-import type { Padecimiento } from './entities/padecimiento.entity.js';
+import {
+  SanitaryService,
+  type MedicamentoCatalogo,
+  type PadecimientoCatalogo,
+} from './sanitary.service.js';
 
 /**
  * Controlador para los catálogos sanitarios.
@@ -39,7 +41,7 @@ export class SanitaryController {
   async getMedicamentos(
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
-  ): Promise<Medicamento[]> {
+  ): Promise<MedicamentoCatalogo[]> {
     return this.sanitaryService.getMedicamentos(user.tenantId, manager);
   }
 
@@ -60,7 +62,7 @@ export class SanitaryController {
   async getPadecimientos(
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
-  ): Promise<Padecimiento[]> {
+  ): Promise<PadecimientoCatalogo[]> {
     return this.sanitaryService.getPadecimientos(user.tenantId, manager);
   }
 }
