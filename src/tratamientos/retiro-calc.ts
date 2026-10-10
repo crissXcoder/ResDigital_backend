@@ -1,3 +1,8 @@
+import { ZONA_HORARIA_FINCA } from '../reproductivo/services/reproductive-calculation.service.js';
+
+/** Máximo de días entre la aplicación y la última administración de un protocolo. */
+export const MAX_DIAS_PROTOCOLO = 60;
+
 /**
  * Aritmética de fechas calendario pura (UTC) para retiros sanitarios.
  * Misma regla que el frontend y que ReproductiveCalculationService.addDays.
@@ -17,12 +22,14 @@ export function addCalendarDays(fechaStr: string, days: number): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Fecha civil de hoy en la zona horaria de la finca, sin depender de la del servidor. */
 export function todayIsoDate(reference?: Date): string {
-  const d = reference ?? new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_HORARIA_FINCA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(reference ?? new Date());
 }
 
 export function diasRestantes(
@@ -40,45 +47,60 @@ export function diasRestantes(
 export interface RetirosResueltos {
   diasRetiroLeche: number;
   diasRetiroCarne: number;
-  diasRetiro: number;
+  fechaUltimaAdministracion: string;
   fechaLiberacionLeche: string;
   fechaLiberacionCarne: string;
 }
 
-/**
- * Resuelve retiros duales con fallback al campo legado diasRetiro.
- */
+/** Liberaciones calculadas desde la última administración (por defecto, la aplicación). */
 export function resolveRetiros(input: {
   fecha: string;
-  diasRetiroLeche?: number | null;
-  diasRetiroCarne?: number | null;
-  diasRetiro?: number | null;
+  fechaUltimaAdministracion?: string | null;
+  diasRetiroLeche: number;
+  diasRetiroCarne: number;
 }): RetirosResueltos {
-  const legacy = input.diasRetiro ?? 0;
-  const leche =
-    input.diasRetiroLeche != null && !Number.isNaN(input.diasRetiroLeche)
-      ? input.diasRetiroLeche
-      : legacy;
-  const carne =
-    input.diasRetiroCarne != null && !Number.isNaN(input.diasRetiroCarne)
-      ? input.diasRetiroCarne
-      : legacy;
-  const safeLeche = Math.max(0, leche);
-  const safeCarne = Math.max(0, carne);
+  const ultima = (input.fechaUltimaAdministracion ?? input.fecha).slice(0, 10);
   return {
-    diasRetiroLeche: safeLeche,
-    diasRetiroCarne: safeCarne,
-    diasRetiro: Math.max(safeLeche, safeCarne),
-    fechaLiberacionLeche: addCalendarDays(input.fecha, safeLeche),
-    fechaLiberacionCarne: addCalendarDays(input.fecha, safeCarne),
+    diasRetiroLeche: input.diasRetiroLeche,
+    diasRetiroCarne: input.diasRetiroCarne,
+    fechaUltimaAdministracion: ultima,
+    fechaLiberacionLeche: addCalendarDays(ultima, input.diasRetiroLeche),
+    fechaLiberacionCarne: addCalendarDays(ultima, input.diasRetiroCarne),
   };
+}
+
+/** Devuelve el motivo de rechazo o null si las fechas son válidas. */
+export function validarFechasTratamiento(input: {
+  fecha: string;
+  fechaUltimaAdministracion?: string | null;
+  hoy: string;
+}): string | null {
+  const fecha = input.fecha.slice(0, 10);
+  const ultima = (input.fechaUltimaAdministracion ?? fecha).slice(0, 10);
+  if (fecha > input.hoy) {
+    return `La fecha de aplicación (${fecha}) no puede ser posterior a hoy (${input.hoy}).`;
+  }
+  if (ultima < fecha) {
+    return 'La fecha de última administración no puede ser anterior a la fecha de aplicación.';
+  }
+  if (ultima > addCalendarDays(fecha, MAX_DIAS_PROTOCOLO)) {
+    return `La fecha de última administración no puede superar en más de ${MAX_DIAS_PROTOCOLO} días a la fecha de aplicación.`;
+  }
+  return null;
 }
 
 export interface TratamientoRetiroSnapshot {
   id: string;
   farmaco: string;
+  fechaAplicacion?: string;
   fechaLiberacionLeche: string | null;
   fechaLiberacionCarne: string | null;
+}
+
+export interface TratamientoReferencia {
+  id: string;
+  farmaco: string;
+  fechaAplicacion: string | null;
 }
 
 export interface EstadoSanitarioResult {
@@ -88,7 +110,7 @@ export interface EstadoSanitarioResult {
   liberacionCarne: string | null;
   diasRestantesLeche: number;
   diasRestantesCarne: number;
-  tratamientoReferencia: { id: string; farmaco: string } | null;
+  tratamientoReferencia: TratamientoReferencia | null;
 }
 
 export function computeEstadoSanitario(
@@ -98,7 +120,7 @@ export function computeEstadoSanitario(
 ): EstadoSanitarioResult {
   let maxLeche: string | null = null;
   let maxCarne: string | null = null;
-  let ref: { id: string; farmaco: string; liberacion: string } | null = null;
+  let ref: (TratamientoReferencia & { liberacion: string }) | null = null;
 
   for (const t of tratamientos) {
     const libLeche = t.fechaLiberacionLeche?.slice(0, 10) ?? null;
@@ -116,7 +138,12 @@ export function computeEstadoSanitario(
     );
     for (const liberacion of candidatas) {
       if (!ref || liberacion > ref.liberacion) {
-        ref = { id: t.id, farmaco: t.farmaco, liberacion };
+        ref = {
+          id: t.id,
+          farmaco: t.farmaco,
+          fechaAplicacion: t.fechaAplicacion?.slice(0, 10) ?? null,
+          liberacion,
+        };
       }
     }
   }
@@ -130,6 +157,8 @@ export function computeEstadoSanitario(
     liberacionCarne: maxCarne,
     diasRestantesLeche: maxLeche ? diasRestantes(maxLeche, fechaReferencia) : 0,
     diasRestantesCarne: maxCarne ? diasRestantes(maxCarne, fechaReferencia) : 0,
-    tratamientoReferencia: ref ? { id: ref.id, farmaco: ref.farmaco } : null,
+    tratamientoReferencia: ref
+      ? { id: ref.id, farmaco: ref.farmaco, fechaAplicacion: ref.fechaAplicacion }
+      : null,
   };
 }

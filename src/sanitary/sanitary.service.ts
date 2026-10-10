@@ -88,6 +88,17 @@ export const PADECIMIENTOS_BASE = [
 ];
 
 /**
+ * `referencia: true` marca filas del catálogo base que no existen en la base:
+ * su `id` no sirve como `medicamentoId`/`padecimientoId` y el cliente debe
+ * enviar el nombre como texto libre.
+ */
+export type MedicamentoCatalogo = Medicamento & { referencia?: true };
+export type PadecimientoCatalogo = Omit<Padecimiento, 'medicamentoSugerido'> & {
+  medicamentoSugerido: MedicamentoCatalogo | null;
+  referencia?: true;
+};
+
+/**
  * Servicio de lectura para los catálogos sanitarios.
  * Filtra siempre por `tenant_id` del usuario autenticado.
  * Si DataSource no está inicializado, opera en modo catálogo base en memoria (mismo patrón que AuthModule).
@@ -117,7 +128,7 @@ export class SanitaryService {
   async getMedicamentos(
     tenantId: string,
     manager: EntityManager,
-  ): Promise<Medicamento[]> {
+  ): Promise<MedicamentoCatalogo[]> {
     const medicamentos = await manager.find(Medicamento, {
       where: { tenantId },
       order: { nombreComercial: 'ASC' },
@@ -134,7 +145,7 @@ export class SanitaryService {
   async getPadecimientos(
     tenantId: string,
     manager: EntityManager,
-  ): Promise<Padecimiento[]> {
+  ): Promise<PadecimientoCatalogo[]> {
     const padecimientos = await manager.find(Padecimiento, {
       where: { tenantId },
       relations: { medicamentoSugerido: true },
@@ -161,16 +172,18 @@ export class SanitaryService {
         categoria: p.categoria,
         medicamentoSugeridoId: suggestedMed?.id || null,
         medicamentoSugerido: suggestedMed,
+        referencia: true,
       };
-    }) as Padecimiento[];
+    });
   }
 
   /** Catálogo de referencia (valores de Reglas-de-Negocio-Ganaderas.md). */
-  private catalogoBaseMedicamentos(tenantId: string): Medicamento[] {
+  private catalogoBaseMedicamentos(tenantId: string): MedicamentoCatalogo[] {
     return MEDICAMENTOS_BASE.map((m, index) => ({
       id: `00000000-0000-0000-0000-00000000000${index + 1}`,
       tenantId,
       ...m,
-    })) as Medicamento[];
+      referencia: true,
+    }));
   }
 }

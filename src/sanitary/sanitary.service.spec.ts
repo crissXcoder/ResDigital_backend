@@ -103,6 +103,20 @@ describe('SanitaryService', () => {
       expect(result[0].tenantId).toBe(TENANT_ID);
       expect(result[0].diasRetiroLecheDefault).toBe(5);
       expect(result[0].diasRetiroCarneDefault).toBe(4);
+      expect(result.every((m) => m.referencia === true)).toBe(true);
+    });
+
+    it('las filas guardadas en la base no llevan la marca de referencia', async () => {
+      mockFind.mockResolvedValue([
+        { id: 'med-real', tenantId: TENANT_ID, nombreComercial: 'X' },
+      ]);
+
+      const result = await service.getMedicamentos(
+        TENANT_ID,
+        managerDe(mockFind),
+      );
+
+      expect(result[0]).not.toHaveProperty('referencia');
     });
 
     it('devuelve los 10 padecimientos base con su medicamento sugerido resuelto', async () => {
@@ -122,6 +136,7 @@ describe('SanitaryService', () => {
       expect(mastitis?.medicamentoSugerido?.nombreComercial).toBe(
         'Cefalexina 200 Intramamaria',
       );
+      expect(result.every((p) => p.referencia === true)).toBe(true);
     });
   });
 

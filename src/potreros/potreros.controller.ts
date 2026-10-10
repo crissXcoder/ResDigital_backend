@@ -83,7 +83,34 @@ export class PotrerosController {
     return this.potrerosService.asignarAnimales(
       id,
       user.tenantId,
-      body.animalIds,
+      user.userId,
+      body,
+      manager,
+    );
+  }
+
+  @Get('animal/:animalId/movimientos')
+  obtenerMovimientosAnimal(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('animalId') animalId: string,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.potrerosService.obtenerMovimientosAnimal(
+      animalId,
+      user.tenantId,
+      manager,
+    );
+  }
+
+  @Get(':id/movimientos')
+  obtenerMovimientosPotrero(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.potrerosService.obtenerMovimientosPotrero(
+      id,
+      user.tenantId,
       manager,
     );
   }
