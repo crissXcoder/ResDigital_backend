@@ -33,7 +33,6 @@ async function install(name) {
   if (existsSync(destination)) return destination;
   mkdirSync(dirname(destination), { recursive: true });
   const archive = `${destination}${process.platform === 'win32' ? '.zip' : '.archive'}`;
-  const archive = process.platform === 'win32' ? `${destination}.zip` : `${destination}.archive`;
   try {
     const response = await fetch(tool.url + tool.archive, { redirect: 'follow' });
     if (!response.ok || !response.body) throw new Error(`${name}: HTTP ${response.status}.`);
