@@ -3,6 +3,10 @@ import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { CreateAnimalDto } from '../dto/create-animal.dto.js';
 import { BajaAnimalDto } from '../dto/baja-animal.dto.js';
+import {
+  PartoCriaContratoDto,
+  DatosNuevaCriaPartoDto,
+} from '../dto/parto-cria.dto.js';
 
 describe('DTOs de Animales - Validaciones de Enums, Límites y Fechas (HATO-T004)', () => {
   function crearCreateDtoValido(): Record<string, any> {
@@ -141,4 +145,71 @@ describe('DTOs de Animales - Validaciones de Enums, Límites y Fechas (HATO-T004
       expect(errors.some((e) => e.property === 'pesoFinalKg')).toBe(true);
     });
   });
+
+  describe('PartoCriaContratoDto y DatosNuevaCriaPartoDto (RF-004: Contrato Animal/Reproducción)', () => {
+    it('pasa con criaAnimalId válido', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        criaAnimalId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+    });
+
+    it('rechaza criaAnimalId que no es UUID', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        criaAnimalId: 'no-es-uuid',
+      });
+      const errors = await validate(dto);
+      expect(errors.some((e) => e.property === 'criaAnimalId')).toBe(true);
+    });
+
+    it('pasa con nuevaCria válida', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        nuevaCria: {
+          areteInterno: 'CR-101',
+          nombre: 'Muñeca',
+          sexo: 'Hembra',
+          categoria: 'Ternera',
+          pesoNacimientoKg: 35.5,
+          fechaNacimiento: '2026-05-10',
+        },
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBe(0);
+    });
+
+    it('rechaza nuevaCria con sexo inválido', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        nuevaCria: {
+          areteInterno: 'CR-102',
+          sexo: 'Invalido',
+        },
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('rechaza nuevaCria con peso de nacimiento negativo', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        nuevaCria: {
+          areteInterno: 'CR-103',
+          pesoNacimientoKg: -10,
+        },
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('rechaza nuevaCria con fecha de nacimiento futura', async () => {
+      const dto = plainToInstance(PartoCriaContratoDto, {
+        nuevaCria: {
+          areteInterno: 'CR-104',
+          fechaNacimiento: '2099-12-31',
+        },
+      });
+      const errors = await validate(dto);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+  });
+
 });
