@@ -16,6 +16,10 @@ import type { CreateAnimalDto } from './dto/create-animal.dto.js';
 import type { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import type { BajaAnimalDto } from './dto/baja-animal.dto.js';
 import {
+  PartoCriaContratoDto,
+  DatosNuevaCriaPartoDto,
+} from './dto/parto-cria.dto.js';
+import {
   ANIMAL_DOCUMENT_OBJECT_PATH_REGEX,
   type CreateDocumentoDto,
 } from './dto/create-documento.dto.js';
@@ -612,4 +616,242 @@ export class AnimalesService {
 
     return manager.save(doc);
   }
+
+  /**
+   * ============================================================================
+   * CONTRATO M01 (Cristhian - Animales) ↔ M03 (Ari - Reproducción)
+   * ============================================================================
+   *
+   * Operación transaccional interna y segura para crear o vincular una cría
+   * durante el registro de un evento de parto en `ReproductiveService.registrarParto`.
+   *
+   * Garantiza:
+   * 1. Aislamiento estricto de tenant (`tenantId`).
+   * 2. Comprobación de que la madre existe en la finca y es de sexo 'Hembra'.
+   * 3. Prevención de auto-parentesco y ciclos genealógicos mediante DFS/BFS.
+   * 4. Herencia biológica automática de raza (`razaId`, `razaOtra`) y potrero de la madre
+   *    si no se especifican explícitamente en `nuevaCria`.
+   * 5. Asignación automática de categoría según sexo ('Ternera' para Hembra, 'Ternero' para Macho).
+   * 6. Validación de unicidad de arete interno y DIIO en la finca.
+   * 7. Idempotencia: si se invoca con cría ya vinculada a la madre, no duplica ni falla.
+   *
+   * @param tenantId UUID de la finca
+   * @param madreId UUID de la vaca que parió
+   * @param dto Contrato de cría (criaAnimalId o nuevaCria)
+   * @param fechaParto Fecha del parto (YYYY-MM-DD o Date), usada como fallback si la cría no tiene fecha
+   * @param manager EntityManager transaccional obligatorio provisto por Reproducción
+   * @returns Entidad Animal creada o vinculada, o null si no se especificó cría
+   */
+  async crearOValidarCriaParaParto(
+    tenantId: string,
+    madreId: string,
+    dto: PartoCriaContratoDto | null | undefined,
+    fechaParto: string | Date | null | undefined,
+    manager: EntityManager,
+  ): Promise<Animal | null> {
+    if (!dto || (!dto.criaAnimalId && !dto.nuevaCria)) {
+      return null;
+    }
+
+    if (dto.criaAnimalId && dto.nuevaCria) {
+      throw new BadRequestException(
+        'El contrato de cría no permite especificar "criaAnimalId" y "nuevaCria" simultáneamente.',
+      );
+    }
+
+    if (!madreId) {
+      throw new BadRequestException(
+        'El identificador de la madre (madreId) es obligatorio para procesar el parto.',
+      );
+    }
+
+    const madre = await manager.findOne(Animal, {
+      where: { id: madreId, tenantId },
+      select: {
+        id: true,
+        tenantId: true,
+        sexo: true,
+        razaId: true,
+        razaOtra: true,
+        potreroId: true,
+        areteInterno: true,
+      },
+    });
+
+    if (!madre) {
+      throw new NotFoundException(
+        `La vaca madre con ID ${madreId} no existe en esta finca.`,
+      );
+    }
+
+    if (madre.sexo !== 'Hembra') {
+      throw new BadRequestException(
+        'El animal registrado como madre del parto debe ser de sexo Hembra.',
+      );
+    }
+
+    // Modalidad A: Vincular cría existente
+    if (dto.criaAnimalId) {
+      if (dto.criaAnimalId === madreId) {
+        throw new BadRequestException(
+          'La cría no puede ser el mismo animal que la madre.',
+        );
+      }
+
+      const cria = await manager.findOne(Animal, {
+        where: { id: dto.criaAnimalId, tenantId },
+      });
+
+      if (!cria) {
+        throw new NotFoundException(
+          `La cría con ID ${dto.criaAnimalId} no fue encontrada en esta finca.`,
+        );
+      }
+
+      if (cria.madreId && cria.madreId !== madreId) {
+        throw new BadRequestException(
+          `La cría ya tiene asignada otra madre (ID: ${cria.madreId}) en esta finca.`,
+        );
+      }
+
+      const hayCiclo = await this.detectarCicloAncestros(
+        cria.id,
+        madreId,
+        tenantId,
+        manager,
+      );
+      if (hayCiclo) {
+        throw new BadRequestException(
+          'No se puede asignar como madre a un descendiente del animal (ciclo genealógico detectado).',
+        );
+      }
+
+      if (!cria.madreId) {
+        cria.madreId = madreId;
+        return await manager.save(cria);
+      }
+
+      return cria;
+    }
+
+    // Modalidad B: Alta de nueva cría en transacción
+    if (dto.nuevaCria) {
+      const nueva = dto.nuevaCria;
+      const arete = nueva.areteInterno?.trim();
+      if (!arete) {
+        throw new BadRequestException(
+          'El arete interno de la nueva cría es obligatorio.',
+        );
+      }
+
+      const existenteArete = await manager.findOne(Animal, {
+        where: { tenantId, areteInterno: arete },
+        select: { id: true },
+      });
+      if (existenteArete) {
+        throw new ConflictException(
+          `Ya existe un animal con el arete interno "${arete}" en esta finca.`,
+        );
+      }
+
+      const diio = nueva.numeroOficialDiio?.trim() || null;
+      if (diio) {
+        const existenteDiio = await manager.findOne(Animal, {
+          where: { tenantId, numeroOficialDiio: diio },
+          select: { id: true },
+        });
+        if (existenteDiio) {
+          throw new ConflictException(
+            `Ya existe un animal registrado con el número oficial DIIO "${diio}" en esta finca.`,
+          );
+        }
+      }
+
+      const sexo = nueva.sexo ?? 'Hembra';
+      if (sexo !== 'Hembra' && sexo !== 'Macho') {
+        throw new BadRequestException(
+          "El sexo de la cría debe ser 'Hembra' o 'Macho'.",
+        );
+      }
+      const categoriaDefault = sexo === 'Hembra' ? 'Ternera' : 'Ternero';
+      const categoria = nueva.categoria ?? categoriaDefault;
+
+      const razaId = nueva.razaId || madre.razaId;
+      const razaOtra = nueva.razaOtra || (nueva.razaId ? null : madre.razaOtra);
+      const potreroId = nueva.potreroId ?? madre.potreroId ?? null;
+
+      let fechaNacimientoStr: string;
+      if (nueva.fechaNacimiento) {
+        fechaNacimientoStr = nueva.fechaNacimiento.slice(0, 10);
+      } else if (fechaParto) {
+        fechaNacimientoStr =
+          fechaParto instanceof Date
+            ? fechaParto.toISOString().slice(0, 10)
+            : String(fechaParto).slice(0, 10);
+      } else {
+        fechaNacimientoStr = new Date().toISOString().slice(0, 10);
+      }
+
+      const hoy = new Date().toISOString().slice(0, 10);
+      if (fechaNacimientoStr > hoy) {
+        throw new BadRequestException(
+          'La fecha de nacimiento no puede ser una fecha futura.',
+        );
+      }
+
+      if (
+        nueva.pesoNacimientoKg !== undefined &&
+        nueva.pesoNacimientoKg !== null &&
+        nueva.pesoNacimientoKg < 0
+      ) {
+        throw new BadRequestException(
+          'El peso de nacimiento no puede ser negativo.',
+        );
+      }
+
+      if (nueva.padreId) {
+        const padre = await manager.findOne(Animal, {
+          where: { id: nueva.padreId, tenantId },
+          select: { id: true, sexo: true },
+        });
+        if (!padre) {
+          throw new BadRequestException(
+            'El toro padre especificado no existe en esta finca.',
+          );
+        }
+        if (padre.sexo !== 'Macho') {
+          throw new BadRequestException(
+            'El padre especificado debe ser de sexo Macho.',
+          );
+        }
+      }
+
+      const nombre = nueva.nombre?.trim() || arete;
+
+      const nuevoAnimal = manager.create(Animal, {
+        tenantId,
+        nombre,
+        areteInterno: arete,
+        numeroOficialDiio: diio,
+        sexo,
+        razaId,
+        razaOtra,
+        categoria,
+        potreroId,
+        fechaNacimiento: fechaNacimientoStr,
+        pesoActualKg: nueva.pesoNacimientoKg ?? null,
+        fotoUrl: nueva.fotoUrl ?? null,
+        madreId: madre.id,
+        padreId: nueva.padreId ?? null,
+        padreExternoDescripcion: nueva.padreExternoDescripcion ?? null,
+        origen: 'Finca',
+        activo: true,
+      });
+
+      return await manager.save(nuevoAnimal);
+    }
+
+    return null;
+  }
+
 }

@@ -1149,3 +1149,449 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
     ).rejects.toThrowError(NotFoundException);
   });
 });
+
+describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/Reproducción)', () => {
+  let service: AnimalesService;
+  let mockEntityManager: EntityManager;
+  let documentStorage: Pick<AnimalDocumentStorageService, 'validateObject' | 'removeObject'>;
+
+  const TENANT_A = '11111111-1111-4111-8111-111111111111';
+  const MADRE_ID = '22222222-2222-4222-8222-222222222222';
+  const CRIA_ID = '33333333-3333-4333-8333-333333333333';
+  const PADRE_ID = '44444444-4444-4444-8444-444444444444';
+
+  const madreBase = {
+    id: MADRE_ID,
+    tenantId: TENANT_A,
+    sexo: 'Hembra',
+    razaId: 'raza-jersey',
+    razaOtra: null,
+    potreroId: 'potrero-maternidad',
+    areteInterno: 'VACA-01',
+  } as unknown as Animal;
+
+  beforeEach(() => {
+    documentStorage = {
+      validateObject: vi.fn().mockResolvedValue(undefined),
+      removeObject: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new AnimalesService(documentStorage as AnimalDocumentStorageService);
+
+    mockEntityManager = {
+      findOne: vi.fn(),
+      find: vi.fn(),
+      create: vi.fn((_entity: any, data: any) => ({ ...data })),
+      save: vi.fn(async (val: any) => val),
+      query: vi.fn().mockResolvedValue([]),
+    } as unknown as EntityManager;
+  });
+
+  it('retorna null si dto es nulo, indefinido o no contiene criaAnimalId ni nuevaCria', async () => {
+    expect(
+      await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        null,
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).toBeNull();
+
+    expect(
+      await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        {},
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).toBeNull();
+  });
+
+  it('rechaza si se envían simultáneamente criaAnimalId y nuevaCria', async () => {
+    await expect(
+      service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        {
+          criaAnimalId: CRIA_ID,
+          nuevaCria: { areteInterno: 'CR-01' },
+        },
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(BadRequestException);
+  });
+
+  it('rechaza si madreId está vacío', async () => {
+    await expect(
+      service.crearOValidarCriaParaParto(
+        TENANT_A,
+        '',
+        { criaAnimalId: CRIA_ID },
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(BadRequestException);
+  });
+
+  it('rechaza si la vaca madre no existe en el tenant', async () => {
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(null);
+
+    await expect(
+      service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        { criaAnimalId: CRIA_ID },
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(NotFoundException);
+  });
+
+  it('rechaza si la vaca madre es de sexo Macho', async () => {
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce({
+      ...madreBase,
+      sexo: 'Macho',
+    } as Animal);
+
+    await expect(
+      service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        { criaAnimalId: CRIA_ID },
+        '2026-05-10',
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError(BadRequestException);
+  });
+
+  describe('Modalidad A: Vincular cría existente', () => {
+    it('rechaza si criaAnimalId es la misma madre (auto-parentesco)', async () => {
+      vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(madreBase);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { criaAnimalId: MADRE_ID },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('rechaza si la cría no existe en el tenant', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { criaAnimalId: CRIA_ID },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(NotFoundException);
+    });
+
+    it('rechaza si la cría ya tiene asignada otra madre distinta', async () => {
+      const criaConOtraMadre = {
+        id: CRIA_ID,
+        tenantId: TENANT_A,
+        madreId: 'otra-madre-uuid',
+      } as Animal;
+
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(criaConOtraMadre);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { criaAnimalId: CRIA_ID },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('rechaza si se detecta un ciclo genealógico', async () => {
+      const criaExistente = {
+        id: CRIA_ID,
+        tenantId: TENANT_A,
+        madreId: null,
+      } as Animal;
+
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(criaExistente)
+        .mockResolvedValueOnce({
+          id: MADRE_ID,
+          madreId: CRIA_ID,
+          padreId: null,
+        } as Animal);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { criaAnimalId: CRIA_ID },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('vincula exitosamente asignando madreId si la cría no tenía madre', async () => {
+      const criaSinMadre = {
+        id: CRIA_ID,
+        tenantId: TENANT_A,
+        madreId: null,
+      } as Animal;
+
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(criaSinMadre)
+        .mockResolvedValueOnce({
+          id: MADRE_ID,
+          madreId: null,
+          padreId: null,
+        } as Animal);
+
+      const res = await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        { criaAnimalId: CRIA_ID },
+        '2026-05-10',
+        mockEntityManager,
+      );
+
+      expect(res).not.toBeNull();
+      expect(res!.madreId).toBe(MADRE_ID);
+      expect(mockEntityManager.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: CRIA_ID, madreId: MADRE_ID }),
+      );
+    });
+
+    it('retorna la cría intacta si ya tenía la misma madre asignada (idempotencia)', async () => {
+      const criaConMismaMadre = {
+        id: CRIA_ID,
+        tenantId: TENANT_A,
+        madreId: MADRE_ID,
+      } as Animal;
+
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(criaConMismaMadre)
+        .mockResolvedValueOnce({
+          id: MADRE_ID,
+          madreId: null,
+          padreId: null,
+        } as Animal);
+
+      const res = await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        { criaAnimalId: CRIA_ID },
+        '2026-05-10',
+        mockEntityManager,
+      );
+
+      expect(res).toBe(criaConMismaMadre);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Modalidad B: Alta de nueva cría en transacción', () => {
+    it('rechaza si areteInterno está vacío o en blanco', async () => {
+      vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(madreBase);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { nuevaCria: { areteInterno: '   ' } },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('rechaza si areteInterno ya existe en el tenant', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce({ id: 'animal-existente' } as Animal);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          { nuevaCria: { areteInterno: 'CR-DUP-01' } },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(ConflictException);
+    });
+
+    it('rechaza si numeroOficialDiio ya existe en el tenant', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'otro-con-diio' } as Animal);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          {
+            nuevaCria: {
+              areteInterno: 'CR-02',
+              numeroOficialDiio: 'DIIO-1234',
+            },
+          },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(ConflictException);
+    });
+
+    it('rechaza si fecha de nacimiento es futura', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          {
+            nuevaCria: {
+              areteInterno: 'CR-03',
+              fechaNacimiento: '2099-01-01',
+            },
+          },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('rechaza si peso de nacimiento es negativo', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          {
+            nuevaCria: {
+              areteInterno: 'CR-04',
+              pesoNacimientoKg: -5,
+            },
+          },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('rechaza si el padre especificado no existe o es Hembra', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: PADRE_ID, sexo: 'Hembra' } as Animal);
+
+      await expect(
+        service.crearOValidarCriaParaParto(
+          TENANT_A,
+          MADRE_ID,
+          {
+            nuevaCria: {
+              areteInterno: 'CR-05',
+              padreId: PADRE_ID,
+            },
+          },
+          '2026-05-10',
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError(BadRequestException);
+    });
+
+    it('crea exitosamente nueva cría heredando razaId, potreroId de la madre y categoría Ternera si sexo es Hembra', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null);
+
+      const res = await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        {
+          nuevaCria: {
+            areteInterno: 'CR-100',
+            sexo: 'Hembra',
+            pesoNacimientoKg: 36,
+          },
+        },
+        '2026-05-12',
+        mockEntityManager,
+      );
+
+      expect(res).not.toBeNull();
+      expect(mockEntityManager.create).toHaveBeenCalledWith(
+        Animal,
+        expect.objectContaining({
+          tenantId: TENANT_A,
+          areteInterno: 'CR-100',
+          nombre: 'CR-100',
+          sexo: 'Hembra',
+          categoria: 'Ternera',
+          razaId: 'raza-jersey',
+          potreroId: 'potrero-maternidad',
+          madreId: MADRE_ID,
+          fechaNacimiento: '2026-05-12',
+          pesoActualKg: 36,
+          origen: 'Finca',
+          activo: true,
+        }),
+      );
+      expect(mockEntityManager.save).toHaveBeenCalled();
+    });
+
+    it('crea cría macho con categoría Ternero y usa fecha actual si no se provee fecha de parto', async () => {
+      vi.mocked(mockEntityManager.findOne)
+        .mockResolvedValueOnce(madreBase)
+        .mockResolvedValueOnce(null);
+
+      const res = await service.crearOValidarCriaParaParto(
+        TENANT_A,
+        MADRE_ID,
+        {
+          nuevaCria: {
+            areteInterno: 'CR-MACHITO',
+            nombre: 'Campeón',
+            sexo: 'Macho',
+          },
+        },
+        null,
+        mockEntityManager,
+      );
+
+      expect(res).not.toBeNull();
+      expect(mockEntityManager.create).toHaveBeenCalledWith(
+        Animal,
+        expect.objectContaining({
+          nombre: 'Campeón',
+          sexo: 'Macho',
+          categoria: 'Ternero',
+          madreId: MADRE_ID,
+        }),
+      );
+    });
+  });
+});
