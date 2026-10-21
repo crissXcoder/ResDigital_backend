@@ -82,4 +82,3 @@ async function main() {
   } else throw new Error('Comando esperado: actionlint | gitleaks-protect | gitleaks-ci.');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch((error) => { process.stderr.write(`Herramienta de seguridad bloqueó la operación: ${error.message}\n`); process.exitCode = 1; });
-
