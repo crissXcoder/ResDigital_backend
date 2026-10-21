@@ -237,6 +237,52 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
   });
 });
 
+describe('AnimalesService - descendencia del expediente (RF-005)', () => {
+  const TENANT_A = '11111111-1111-4111-8111-111111111111';
+  const ANIMAL_ID = '22222222-2222-4222-8222-222222222222';
+  const manager = {
+    findOne: vi.fn(),
+    find: vi.fn(),
+  } as unknown as EntityManager;
+  const service = new AnimalesService({
+    validateObject: vi.fn(),
+    removeObject: vi.fn(),
+  } as unknown as AnimalDocumentStorageService);
+
+  beforeEach(() => {
+    vi.mocked(manager.findOne).mockReset();
+    vi.mocked(manager.find).mockReset();
+  });
+
+  it('devuelve descendencia por madre o padre limitada a la finca y ordenada por arete', async () => {
+    vi.mocked(manager.findOne).mockResolvedValue({ id: ANIMAL_ID } as Animal);
+    vi.mocked(manager.find).mockResolvedValue([]);
+
+    await service.findDescendencia(ANIMAL_ID, TENANT_A, manager);
+
+    expect(manager.findOne).toHaveBeenCalledWith(Animal, {
+      where: { id: ANIMAL_ID, tenantId: TENANT_A },
+      select: { id: true },
+    });
+    expect(manager.find).toHaveBeenCalledWith(Animal, expect.objectContaining({
+      where: [
+        { tenantId: TENANT_A, madreId: ANIMAL_ID },
+        { tenantId: TENANT_A, padreId: ANIMAL_ID },
+      ],
+      order: { areteInterno: 'ASC' },
+    }));
+  });
+
+  it('no revela descendencia cuando el animal no pertenece a la finca', async () => {
+    vi.mocked(manager.findOne).mockResolvedValue(null);
+
+    await expect(
+      service.findDescendencia(ANIMAL_ID, TENANT_A, manager),
+    ).rejects.toThrowError(NotFoundException);
+    expect(manager.find).not.toHaveBeenCalled();
+  });
+});
+
 describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
   let service: AnimalesService;
   let mockEntityManager: EntityManager;

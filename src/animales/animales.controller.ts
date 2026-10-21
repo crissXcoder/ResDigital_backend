@@ -51,6 +51,16 @@ export class AnimalesController {
     return this.animalesService.findOne(id, user.tenantId, manager);
   }
 
+  @Get(':id/descendencia')
+  @ApiOperation({ summary: 'Consultar descendencia registrada del animal en la finca' })
+  findDescendencia(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.findDescendencia(id, user.tenantId, manager);
+  }
+
   @Post()
   @Roles('propietario', 'administrador')
   create(

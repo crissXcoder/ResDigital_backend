@@ -84,6 +84,36 @@ export class AnimalesService {
     return animal;
   }
 
+  async findDescendencia(animalId: string, tenantId: string, manager: EntityManager) {
+    const animal = await manager.findOne(Animal, {
+      where: { id: animalId, tenantId },
+      select: { id: true },
+    });
+
+    if (!animal) {
+      throw new NotFoundException(`Animal con ID ${animalId} no encontrado`);
+    }
+
+    return manager.find(Animal, {
+      where: [
+        { tenantId, madreId: animalId },
+        { tenantId, padreId: animalId },
+      ],
+      select: {
+        id: true,
+        areteInterno: true,
+        nombre: true,
+        sexo: true,
+        categoria: true,
+        fechaNacimiento: true,
+        madreId: true,
+        padreId: true,
+        activo: true,
+      },
+      order: { areteInterno: 'ASC' },
+    });
+  }
+
   /**
    * Convierte a null las cadenas vacías de los campos opcionales.
    *
