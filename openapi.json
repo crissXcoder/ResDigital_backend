@@ -61,7 +61,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteUserResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1639,6 +1646,39 @@
           "Lactancia"
         ]
       }
+    },
+    "/auth/invitaciones": {
+      "get": {
+        "operationId": "AuthController_listarInvitaciones",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationSummaryResponseDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Solo el propietario puede ver invitaciones"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar invitaciones de la finca del propietario",
+        "tags": [
+          "Auth"
+        ]
+      }
     }
   },
   "info": {
@@ -1700,11 +1740,45 @@
       },
       "InviteUserDto": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "correo": {
+            "type": "string",
+            "format": "email"
+          },
+          "rol": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "nombreCompleto": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "correo",
+          "rol"
+        ]
       },
       "ConfirmInvitationDto": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "nombreCompleto": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "nombreCompleto",
+          "invitacionId"
+        ]
       },
       "CreateAnimalDto": {
         "type": "object",
@@ -3109,6 +3183,90 @@
           "fecha",
           "notas",
           "usuarioId"
+        ]
+      },
+      "InviteUserResponseDto": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rolAsignado": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "emailSent": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "success",
+          "invitacionId",
+          "rolAsignado",
+          "emailSent",
+          "expiresAt"
+        ]
+      },
+      "InvitationSummaryResponseDto": {
+        "type": "object",
+        "properties": {
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correo": {
+            "type": "string",
+            "format": "email"
+          },
+          "rol": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PENDIENTE",
+              "ACEPTADA",
+              "CANCELADA",
+              "EXPIRADA"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "invitacionId",
+          "correo",
+          "rol",
+          "estado",
+          "createdAt",
+          "expiresAt"
         ]
       }
     }

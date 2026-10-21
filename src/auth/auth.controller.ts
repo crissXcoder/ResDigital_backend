@@ -105,7 +105,7 @@ export class AuthController {
   @Post('invitar')
   @Roles('propietario')
   @ApiOperation({ summary: 'Invitar un usuario a la finca del propietario' })
-  @ApiResponse({ status: 200, type: InviteUserResponseDto })
+  @ApiResponse({ status: 201, type: InviteUserResponseDto })
   async invitarUsuario(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: InviteUserDto,
