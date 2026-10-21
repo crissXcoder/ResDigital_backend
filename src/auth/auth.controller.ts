@@ -6,7 +6,6 @@ import {
   Req,
   UnauthorizedException,
   InternalServerErrorException,
-  Logger,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from './decorators/current-user.decorator.js';
@@ -37,8 +36,6 @@ interface TenantRow {
 @ApiTags('Auth')
 @ApiBearerAuth()
 export class AuthController {
-  private readonly logger = new Logger(AuthController.name);
-
   constructor(private readonly invitationsService: InvitationsService) {}
 
   /**
@@ -58,65 +55,40 @@ export class AuthController {
       throw new UnauthorizedException('Usuario no autenticado');
     }
 
-    let nombreCompleto =
-      (user.rawClaims['nombre_completo'] as string) ||
-      ((
-        user.rawClaims['user_metadata'] as Record<string, unknown> | undefined
-      )?.['nombre_completo'] as string) ||
-      '';
-    let correo = user.email;
-    let nombreFinca = '';
+    if (!req.entityManager) {
+      throw new InternalServerErrorException(
+        'No se pudo validar la finca de la sesión. Volvé a intentar.',
+      );
+    }
 
-    // Si la conexión transaccional con RLS está activa, consultar directamente las tablas
-    if (req.entityManager) {
-      try {
-        const rows = await req.entityManager.query<UsuarioRow[]>(
-          'SELECT nombre_completo, correo FROM public.usuario WHERE id = $1 LIMIT 1;',
-          [user.userId],
-        );
+    const rows = await req.entityManager.query<UsuarioRow[]>(
+      `SELECT nombre_completo, correo FROM public.usuario
+       WHERE id = $1 AND tenant_id = $2 AND activo = true AND rol = $3 LIMIT 1;`,
+      [user.userId, user.tenantId, user.rol],
+    );
+    if (!rows[0]) {
+      throw new UnauthorizedException(
+        'Tu sesión no tiene acceso a una finca activa. Volvé a iniciar sesión.',
+      );
+    }
 
-        if (rows && rows.length > 0) {
-          nombreCompleto = rows[0].nombre_completo || nombreCompleto;
-          correo = rows[0].correo || correo;
-        }
-      } catch (err) {
-        this.logger.warn(
-          `[perfil] No se pudo leer public.usuario para userId=${user.userId}: ${(err as Error).message}`,
-        );
-      }
-
-      try {
-        // Nota: la política RLS de tenant evalúa auth.jwt() ->> 'tenant_id'.
-        // Si tenant_id está anidado en app_metadata el RLS lo bloquea.
-        // Usamos current_setting('app.current_tenant_id') que el interceptor
-        // siempre setea con el tenantId verificado por el AuthGuard.
-        const tenantRows = await req.entityManager.query<TenantRow[]>(
-          `SELECT nombre_finca FROM public.tenant
-           WHERE id = (current_setting('app.current_tenant_id', true))::uuid
-           LIMIT 1;`,
-        );
-
-        if (tenantRows && tenantRows.length > 0) {
-          nombreFinca = tenantRows[0].nombre_finca;
-        } else {
-          this.logger.warn(
-            `[perfil] No se encontró fila en public.tenant para tenantId=${user.tenantId}`,
-          );
-        }
-      } catch (err) {
-        this.logger.warn(
-          `[perfil] No se pudo leer public.tenant para tenantId=${user.tenantId}: ${(err as Error).message}`,
-        );
-      }
+    const tenantRows = await req.entityManager.query<TenantRow[]>(
+      'SELECT nombre_finca FROM public.tenant WHERE id = $1 LIMIT 1;',
+      [user.tenantId],
+    );
+    if (!tenantRows[0]?.nombre_finca) {
+      throw new UnauthorizedException(
+        'Tu sesión no tiene acceso a una finca activa. Volvé a iniciar sesión.',
+      );
     }
 
     return {
       userId: user.userId,
       tenantId: user.tenantId,
       rol: user.rol,
-      nombreCompleto: nombreCompleto || user.email.split('@')[0],
-      correo,
-      nombreFinca,
+      nombreCompleto: rows[0].nombre_completo,
+      correo: rows[0].correo,
+      nombreFinca: tenantRows[0].nombre_finca,
     };
   }
 
