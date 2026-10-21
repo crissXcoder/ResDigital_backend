@@ -24,7 +24,6 @@ export interface InvitacionRecord {
   rolPredefinido: RolUsuario;
   invitadoPor: string;
   estado: 'PENDIENTE' | 'ACEPTADA' | 'CANCELADA';
-  createdAt: string;
 }
 
 export interface InviteUserResult {
@@ -32,7 +31,19 @@ export interface InviteUserResult {
   invitacionId: string;
   rolAsignado: RolUsuario;
   emailSent: boolean | null;
+  expiresAt: string;
 }
+
+export interface InvitationSummary {
+  invitacionId: string;
+  correo: string;
+  rol: RolUsuario;
+  estado: 'PENDIENTE' | 'ACEPTADA' | 'CANCELADA' | 'EXPIRADA';
+  createdAt: string;
+  expiresAt: string;
+}
+
+const INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class InvitationsService {
@@ -56,25 +67,45 @@ export class InvitationsService {
     }
     this.requireTransactionManager(entityManager);
 
+    const email = dto.correo.toLowerCase().trim();
+    await entityManager.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0));",
+      [`invitacion:${email}`],
+    );
+    const pendingElsewhere = await entityManager.query<{ tenant_id: string }[]>(
+      "SELECT tenant_id FROM public.invitacion WHERE correo = $1 AND tenant_id <> $2 AND estado = 'PENDIENTE' LIMIT 1;",
+      [email, inviter.tenantId],
+    );
+    if (pendingElsewhere[0]) {
+      throw new ConflictException('Este correo ya tiene una invitación pendiente para otra finca.');
+    }
+    const existingUser = await entityManager.query<{ id: string }[]>(
+      'SELECT id FROM public.usuario WHERE lower(correo) = $1 LIMIT 1;',
+      [email],
+    );
+    if (existingUser[0]) {
+      throw new ConflictException('Este correo ya pertenece a una cuenta de ResDigital.');
+    }
+
     const record: InvitacionRecord = {
       id: randomUUID(),
       tenantId: inviter.tenantId,
-      correo: dto.correo.toLowerCase().trim(),
+      correo: email,
       rolPredefinido: dto.rol,
       invitadoPor: inviter.userId,
       estado: 'PENDIENTE',
-      createdAt: new Date().toISOString(),
     };
 
-    const persistedRows = await entityManager.query<{ id: string }[]>(
+    const persistedRows = await entityManager.query<{ id: string; created_at: string | Date }[]>(
       `INSERT INTO public.invitacion (
-        id, tenant_id, correo, rol, invitado_por, estado, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        id, tenant_id, correo, rol, invitado_por, estado
+      ) VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (correo, tenant_id) DO UPDATE
         SET rol = EXCLUDED.rol,
             invitado_por = EXCLUDED.invitado_por,
-            estado = 'PENDIENTE'
-      RETURNING id;`,
+            estado = 'PENDIENTE',
+            created_at = now()
+      RETURNING id, created_at;`,
       [
         record.id,
         record.tenantId,
@@ -82,13 +113,13 @@ export class InvitationsService {
         record.rolPredefinido,
         record.invitadoPor,
         record.estado,
-        record.createdAt,
       ],
     );
-    if (!persistedRows[0]?.id) {
+    if (!persistedRows[0]?.id || !persistedRows[0].created_at) {
       throw new Error('La base de datos no confirmó la invitación.');
     }
     record.id = persistedRows[0].id;
+    const createdAt = new Date(persistedRows[0].created_at).toISOString();
 
     await this.auditService.logEvent(
       inviter.tenantId,
@@ -107,13 +138,13 @@ export class InvitationsService {
       invitacionId: record.id,
       rolAsignado: record.rolPredefinido,
       emailSent: null,
+      expiresAt: new Date(Date.parse(createdAt) + INVITATION_TTL_MS).toISOString(),
     };
 
     registerAfterCommitCallback(entityManager, async () => {
       result.emailSent = await this.triggerSupabaseAdminInvite(
         record.correo,
-        record.tenantId,
-        record.rolPredefinido,
+        record.id,
         dto.nombreCompleto,
       );
     });
@@ -137,20 +168,20 @@ export class InvitationsService {
 
     const cleanEmail = correo.toLowerCase().trim();
     const invitationRows = await entityManager.query<
-      { id: string; rol: RolUsuario }[]
+      { id: string; rol: RolUsuario; created_at: string | Date }[]
     >(
-      `SELECT id, rol
+      `SELECT id, rol, created_at
          FROM public.invitacion
-        WHERE correo = $1 AND tenant_id = $2 AND estado = 'PENDIENTE'
-        ORDER BY created_at DESC, id DESC
+        WHERE id = $1 AND correo = $2 AND tenant_id = $3 AND estado = 'PENDIENTE'
+          AND created_at > now() - interval '24 hours'
         LIMIT 1
         FOR UPDATE;`,
-      [cleanEmail, tenantId],
+      [String(untrustedClientPayload['invitacionId'] ?? ''), cleanEmail, tenantId],
     );
     const invitation = invitationRows[0];
     if (!invitation) {
       throw new NotFoundException(
-        'No se encontró una invitación pendiente válida para este correo y finca.',
+        'La invitación no está vigente o ya fue utilizada. Solicitá una nueva al propietario.',
       );
     }
 
@@ -160,6 +191,13 @@ export class InvitationsService {
       invitation.rol,
       invitedUserId,
       entityManager,
+    );
+
+    await entityManager.query(
+      `UPDATE public.usuario
+          SET nombre_completo = $1
+        WHERE id = $2 AND tenant_id = $3 AND activo = true;`,
+      [String(untrustedClientPayload['nombreCompleto'] ?? '').trim(), invitedUserId, tenantId],
     );
 
     const acceptedRows = await entityManager.query<{ id: string }[]>(
@@ -194,16 +232,53 @@ export class InvitationsService {
     };
   }
 
+  async listInvitations(
+    tenantId: string,
+    entityManager: EntityManager,
+  ): Promise<InvitationSummary[]> {
+    this.requireTransactionManager(entityManager);
+    const rows = await entityManager.query<{
+      id: string;
+      correo: string;
+      rol: RolUsuario;
+      estado: 'PENDIENTE' | 'ACEPTADA' | 'CANCELADA';
+      created_at: string | Date;
+      ahora: string | Date;
+    }[]>(
+      `SELECT id, correo, rol, estado, created_at, now() AS ahora
+         FROM public.invitacion
+        WHERE tenant_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50;`,
+      [tenantId],
+    );
+
+    return rows.map((row) => {
+      const createdAt = new Date(row.created_at).toISOString();
+      const expiresAt = new Date(Date.parse(createdAt) + INVITATION_TTL_MS).toISOString();
+      return {
+        invitacionId: row.id,
+        correo: row.correo,
+        rol: row.rol,
+        estado: row.estado === 'PENDIENTE' && Date.parse(expiresAt) <= Date.parse(new Date(row.ahora).toISOString())
+          ? 'EXPIRADA'
+          : row.estado,
+        createdAt,
+        expiresAt,
+      };
+    });
+  }
+
   private async triggerSupabaseAdminInvite(
     correo: string,
-    tenantId: string,
-    rol: RolUsuario,
+    invitacionId: string,
     nombreCompleto?: string,
   ): Promise<boolean> {
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
     const serviceRoleKey = this.configService.get<string>(
       'SUPABASE_SERVICE_ROLE_KEY',
     );
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
 
     if (!supabaseUrl || !serviceRoleKey) {
       this.logger.error(
@@ -213,8 +288,18 @@ export class InvitationsService {
     }
 
     try {
+      const inviteUrl = new URL(
+        '/auth/v1/invite',
+        supabaseUrl.replace(/\/+$/, ''),
+      );
+      if (frontendUrl) {
+        inviteUrl.searchParams.set(
+          'redirect_to',
+          new URL('/aceptar-invitacion', frontendUrl).toString(),
+        );
+      }
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/auth/v1/invite`,
+        inviteUrl,
         {
           method: 'POST',
           headers: {
@@ -224,8 +309,7 @@ export class InvitationsService {
           },
           body: JSON.stringify({
             email: correo,
-            data: { nombre_completo: nombreCompleto || '' },
-            app_metadata: { tenant_id: tenantId, rol },
+            data: { nombre_completo: nombreCompleto || '', invitacion_id: invitacionId },
           }),
           signal: AbortSignal.timeout(10_000),
         },

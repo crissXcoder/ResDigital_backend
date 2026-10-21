@@ -32,7 +32,6 @@ async function install(name) {
   const destination = cachePath(tool);
   if (existsSync(destination)) return destination;
   mkdirSync(dirname(destination), { recursive: true });
-  const archive = `${destination}${process.platform === 'win32' ? '.zip' : '.archive'}`;
   const archive = process.platform === 'win32' ? `${destination}.zip` : `${destination}.archive`;
   try {
     const response = await fetch(tool.url + tool.archive, { redirect: 'follow' });
@@ -83,3 +82,4 @@ async function main() {
   } else throw new Error('Comando esperado: actionlint | gitleaks-protect | gitleaks-ci.');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().catch((error) => { process.stderr.write(`Herramienta de seguridad bloqueó la operación: ${error.message}\n`); process.exitCode = 1; });
+

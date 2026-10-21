@@ -11,8 +11,8 @@
 -- - NUNCA lee 'rol' desde raw_user_meta_data (que el cliente puede manipular libremente).
 -- - Si es auto-registro (sin tenant_id en app_metadata), crea un nuevo tenant y
 --   fuerza incondicionalmente rol = 'propietario'.
--- - Si es una invitación gestionada por el backend con service_role, raw_app_meta_data
---   contiene el tenant_id de la finca y el rol preasignado de forma segura.
+-- - Una invitación Auth solo se vincula con una invitación persistida, por id,
+--   correo y vigencia; user_metadata únicamente localiza el registro.
 -- ------------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
@@ -26,6 +26,7 @@ DECLARE
   v_nombre_finca TEXT;
   v_nombre_completo TEXT;
   v_rol public.rol_usuario;
+  v_invitacion_id UUID;
 BEGIN
   -- Extraer nombre_completo seguro (fallback al prefijo de su correo)
   v_nombre_completo := COALESCE(
@@ -34,16 +35,19 @@ BEGIN
   );
 
   -- Evaluar si es una invitación interna o un alta de finca nueva (self-signup)
-  IF (NEW.raw_app_meta_data ? 'tenant_id') AND (NEW.raw_app_meta_data->>'tenant_id' IS NOT NULL) THEN
-    -- Flujo: Usuario invitado a una finca existente
-    v_tenant_id := (NEW.raw_app_meta_data->>'tenant_id')::UUID;
-    
-    -- Validar rol seguro provisto por el backend en app_metadata (service_role)
-    IF (NEW.raw_app_meta_data->>'rol') IN ('propietario', 'administrador', 'peon', 'veterinario') THEN
-      v_rol := (NEW.raw_app_meta_data->>'rol')::public.rol_usuario;
-    ELSE
-      -- Rol por defecto de menor privilegio en caso de ausencia
-      v_rol := 'peon'::public.rol_usuario;
+  IF NEW.invited_at IS NOT NULL THEN
+    -- Auth invited_at distingue las invitaciones de un signUp público.
+    v_invitacion_id := (NEW.raw_user_meta_data->>'invitacion_id')::UUID;
+    SELECT tenant_id, rol::public.rol_usuario
+      INTO v_tenant_id, v_rol
+      FROM public.invitacion
+     WHERE id = v_invitacion_id
+       AND correo = lower(trim(NEW.email))
+       AND estado = 'PENDIENTE'
+       AND created_at > now() - interval '24 hours';
+
+    IF v_tenant_id IS NULL THEN
+      RAISE EXCEPTION 'No existe una invitación vigente para esta cuenta';
     END IF;
 
     INSERT INTO public.usuario (
