@@ -1923,6 +1923,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "criaAreteInterno": {
+            "type": "string",
+            "nullable": true,
+            "description": "Arete interno de la cría vinculada, si se pudo resolver en esta finca."
+          },
           "facilidadParto": {
             "type": "string",
             "enum": [
@@ -1941,6 +1946,7 @@
         "required": [
           "eventoServicioId",
           "criaAnimalId",
+          "criaAreteInterno",
           "facilidadParto",
           "observaciones"
         ]
@@ -2254,6 +2260,92 @@
           "diagnostico"
         ]
       },
+      "DatosNuevaCriaPartoDto": {
+        "type": "object",
+        "properties": {
+          "areteInterno": {
+            "type": "string",
+            "description": "Identificador único interno o arete de la cría en la finca.",
+            "example": "CR-2026-001"
+          },
+          "nombre": {
+            "type": "string",
+            "description": "Nombre de la cría. Si se omite, se asigna el mismo valor de areteInterno.",
+            "example": "Lucero"
+          },
+          "sexo": {
+            "type": "string",
+            "description": "Sexo de la cría recién nacida ('Hembra' o 'Macho'). Por defecto: 'Hembra'.",
+            "enum": [
+              "Hembra",
+              "Macho"
+            ],
+            "example": "Hembra"
+          },
+          "razaId": {
+            "type": "string",
+            "description": "ID de la raza en catálogo. Si se omite, hereda automáticamente la raza de la madre.",
+            "example": "b1a2c3d4-0000-0000-0000-000000000001"
+          },
+          "razaOtra": {
+            "type": "string",
+            "description": "Descripción personalizada de la raza si aplica. Si se omite y la madre tiene razaOtra, la hereda.",
+            "example": "Cruce Jersey x Girolando"
+          },
+          "numeroOficialDiio": {
+            "type": "string",
+            "description": "Número oficial de arete DIIO del MAG/SENASA. Debe ser único en la finca si se especifica.",
+            "example": "DIIO-CR-998822"
+          },
+          "categoria": {
+            "type": "string",
+            "description": "Categoría de la cría. Si se omite, se auto-asigna 'Ternera' para hembras o 'Ternero' para machos.",
+            "enum": [
+              "Ternero",
+              "Ternera",
+              "Novillo",
+              "Novillo mayor",
+              "Novilla",
+              "Vaca",
+              "Toro"
+            ],
+            "example": "Ternera"
+          },
+          "potreroId": {
+            "type": "string",
+            "description": "ID del potrero donde se ubicará la cría. Si se omite, hereda el potrero de la madre.",
+            "example": "c2b3a4d5-1111-2222-3333-444455556666"
+          },
+          "fechaNacimiento": {
+            "type": "string",
+            "description": "Fecha de nacimiento de la cría (YYYY-MM-DD). Si se omite, se utiliza la fecha del parto.",
+            "example": "2026-10-21"
+          },
+          "pesoNacimientoKg": {
+            "type": "number",
+            "description": "Peso al nacer en kilogramos (peso de nacimiento).",
+            "example": 38.5
+          },
+          "fotoUrl": {
+            "type": "string",
+            "description": "URL de la fotografía inicial de la cría (opcional).",
+            "example": "https://storage.resdigital.cr/fotos/cria-001.jpg"
+          },
+          "padreId": {
+            "type": "string",
+            "description": "ID del toro padre si está registrado en la misma finca (opcional).",
+            "example": "a1b2c3d4-5555-6666-7777-888899990000"
+          },
+          "padreExternoDescripcion": {
+            "type": "string",
+            "description": "Descripción del toro padre si provino de inseminación artificial externa o monta externa.",
+            "example": "Toro Holstein Canadiense Semen Pajilla #4410"
+          }
+        },
+        "required": [
+          "areteInterno"
+        ]
+      },
       "RegistrarPartoDto": {
         "type": "object",
         "properties": {
@@ -2269,8 +2361,16 @@
           },
           "criaAnimalId": {
             "type": "string",
-            "description": "ID del animal registrado como cría recién nacida (si ya fue registrado en el hato)",
+            "description": "ID del animal registrado como cría recién nacida (si ya fue registrado en el hato). Mutuamente excluyente con nuevaCria.",
             "example": "e1d67412-21d9-482f-870d-f55da282b810"
+          },
+          "nuevaCria": {
+            "description": "Datos para dar de alta la cría en la misma transacción del parto. Mutuamente excluyente con criaAnimalId.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatosNuevaCriaPartoDto"
+              }
+            ]
           },
           "facilidadParto": {
             "type": "string",

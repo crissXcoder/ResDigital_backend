@@ -26,6 +26,7 @@ import type { RegistrarServicioDto } from '../dto/registrar-servicio.dto.js';
 import type { RegistrarDiagnosticoDto } from '../dto/registrar-diagnostico.dto.js';
 import type { RegistrarPartoDto } from '../dto/registrar-parto.dto.js';
 import type { RegistrarSecadoDto } from '../dto/registrar-secado.dto.js';
+import { AnimalesService } from '../../animales/animales.service.js';
 
 /** Ventana por defecto del calendario reproductivo del Dashboard, en días. */
 export const DIAS_VENTANA_DEFAULT = 60;
@@ -77,6 +78,7 @@ export class ReproductiveService {
   constructor(
     private readonly calculationService: ReproductiveCalculationService,
     private readonly stateService: ReproductiveStateService,
+    private readonly animalesService: AnimalesService,
   ) {}
 
   /**
@@ -331,20 +333,10 @@ export class ReproductiveService {
       }
     }
 
-    if (dto.criaAnimalId) {
-      if (dto.criaAnimalId === animalId) {
-        throw new BadRequestException(
-          'La cría no puede ser el mismo animal que parió.',
-        );
-      }
-      const cria = await manager.findOne(Animal, {
-        where: { id: dto.criaAnimalId, tenantId },
-      });
-      if (!cria) {
-        throw new NotFoundException(
-          `La cría con ID '${dto.criaAnimalId}' no fue encontrada en este tenant.`,
-        );
-      }
+    if (dto.criaAnimalId && dto.nuevaCria) {
+      throw new BadRequestException(
+        'El contrato de cría no permite especificar "criaAnimalId" y "nuevaCria" simultáneamente.',
+      );
     }
 
     return manager.transaction(async (trx) => {
@@ -393,6 +385,17 @@ export class ReproductiveService {
         );
       }
 
+      const cria = await this.animalesService.crearOValidarCriaParaParto(
+        tenantId,
+        animalId,
+        {
+          criaAnimalId: dto.criaAnimalId,
+          nuevaCria: dto.nuevaCria,
+        },
+        dto.fechaEvento,
+        trx,
+      );
+
       const evento = await trx.save(
         Evento,
         trx.create(Evento, {
@@ -412,7 +415,7 @@ export class ReproductiveService {
         trx.create(EventoParto, {
           eventoId: evento.id,
           eventoServicioId: dto.eventoServicioId ?? null,
-          criaAnimalId: dto.criaAnimalId ?? null,
+          criaAnimalId: cria?.id ?? null,
           facilidadParto: dto.facilidadParto ?? null,
           observaciones: dto.observaciones ?? null,
         }),
