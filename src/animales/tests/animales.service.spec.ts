@@ -106,6 +106,30 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
     );
   });
 
+  it('permite filtrar por sexo, potreroId y razaId (OBS-005)', async () => {
+    const POTRERO_ID = '44444444-4444-4444-8444-444444444444';
+    const RAZA_ID = '55555555-5555-4555-8555-555555555555';
+
+    await service.findAll(
+      TENANT_A,
+      { sexo: 'Hembra', potreroId: POTRERO_ID, razaId: RAZA_ID },
+      mockEntityManager,
+    );
+
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.sexo = :sexo',
+      { sexo: 'Hembra' },
+    );
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.potrero_id = :potreroId',
+      { potreroId: POTRERO_ID },
+    );
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.raza_id = :razaId',
+      { razaId: RAZA_ID },
+    );
+  });
+
   describe('createDocumento', () => {
     const ANIMAL_ID = '22222222-2222-4222-8222-222222222222';
     const DOCUMENT_ID = '33333333-3333-4333-8333-333333333333';

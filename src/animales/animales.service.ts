@@ -52,6 +52,24 @@ export class AnimalesService {
       });
     }
 
+    if (query.sexo) {
+      qb.andWhere('animal.sexo = :sexo', {
+        sexo: query.sexo,
+      });
+    }
+
+    if (query.potreroId) {
+      qb.andWhere('animal.potrero_id = :potreroId', {
+        potreroId: query.potreroId,
+      });
+    }
+
+    if (query.razaId) {
+      qb.andWhere('animal.raza_id = :razaId', {
+        razaId: query.razaId,
+      });
+    }
+
     if (query.arete) {
       qb.andWhere('animal.arete_interno ILIKE :arete', {
         arete: `%${query.arete}%`,
