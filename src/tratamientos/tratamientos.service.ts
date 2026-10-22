@@ -46,6 +46,11 @@ export class TratamientosService {
     manager: EntityManager,
   ): Promise<TratamientoResponseDto> {
     const animal = await this.assertAnimal(tenantId, dto.animalId, manager);
+    if (animal.activo === false) {
+      throw new ConflictException(
+        `El animal con ID '${dto.animalId}' está dado de baja; su historial sanitario permanece disponible, pero no admite tratamientos nuevos.`,
+      );
+    }
     return manager.transaction((trx) =>
       this.crearEvento(trx, tenantId, usuarioId, animal, dto, null),
     );

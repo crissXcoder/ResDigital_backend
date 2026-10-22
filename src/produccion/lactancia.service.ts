@@ -115,6 +115,13 @@ export class LactanciaService {
   ): Promise<EstadoLactanciaDto> {
     const ref = fecha ?? todayIsoDate();
     const animal = await buscarAnimal(manager, tenantId, animalId);
+    if (animal.activo === false) {
+      return {
+        animalId,
+        ...derivarLactancia([], ref),
+        fechaReferencia: ref,
+      };
+    }
     const estado = await this.estadoDe(animal, tenantId, manager, ref);
     return { animalId, ...estado, fechaReferencia: ref };
   }
@@ -158,6 +165,11 @@ export class LactanciaService {
     return manager.transaction(async (trx) => {
       await bloquearAnimalProduccion(trx, animalId);
       const animal = await buscarAnimal(trx, tenantId, animalId);
+      if (animal.activo === false) {
+        throw new BadRequestException(
+          `El animal con arete '${animal.areteInterno}' está dado de baja; no puede iniciar una lactancia.`,
+        );
+      }
       if (!esHembra(animal)) {
         throw new BadRequestException(
           `El animal con arete '${animal.areteInterno}' es macho; solo una hembra puede iniciar lactancia.`,
@@ -184,6 +196,11 @@ export class LactanciaService {
     return manager.transaction(async (trx) => {
       await bloquearAnimalProduccion(trx, animalId);
       const animal = await buscarAnimal(trx, tenantId, animalId);
+      if (animal.activo === false) {
+        throw new BadRequestException(
+          `El animal con arete '${animal.areteInterno}' está dado de baja; no puede registrar eventos nuevos de lactancia.`,
+        );
+      }
       this.validarFechaNoFutura(dto.fecha);
       const actual = await this.estadoDe(animal, tenantId, trx, todayIsoDate());
       if (!actual.enLactancia || !actual.fechaInicio) {

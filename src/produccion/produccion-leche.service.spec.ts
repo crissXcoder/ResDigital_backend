@@ -233,6 +233,14 @@ describe('ProduccionLecheService', () => {
       expect(save).not.toHaveBeenCalled();
     });
 
+    it('rechaza producción nueva para un animal dado de baja', async () => {
+      animal = { ...animal, activo: false };
+      await expect(service.create(TENANT, USER, dto(), manager)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(save).not.toHaveBeenCalled();
+    });
+
     it('rechaza una vaca seca o novilla (no lactante)', async () => {
       estadoDe.mockResolvedValue({ enLactancia: false, fechaInicio: null, eventoInicioId: null });
       await expect(service.create(TENANT, USER, dto(), manager)).rejects.toThrow(

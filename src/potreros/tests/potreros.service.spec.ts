@@ -5,7 +5,11 @@ import { Animal } from '../../animales/entities/animal.entity.js';
 import { Evento } from '../../eventos/entities/evento.entity.js';
 import { EventoMovimiento } from '../entities/evento-movimiento.entity.js';
 import { EntityManager } from 'typeorm';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 
 describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
   let service: PotrerosService;
@@ -54,6 +58,7 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
 
     const eventosGuardados: Evento[] = [];
     const mockRepoEvento = {
+      findOne: vi.fn().mockResolvedValue(null),
       create: vi
         .fn()
         .mockImplementation((dto) => ({ id: 'evento-101', ...dto })),
@@ -240,6 +245,81 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
       ),
     ).rejects.toThrow(BadRequestException);
   });
+
+  it('rechaza mover un animal dado de baja', async () => {
+    const potrero = { id: POTRERO_DESTINO_ID, tenantId: TENANT_ID } as Potrero;
+    const animalInactivo = {
+      id: 'animal-inactivo',
+      tenantId: TENANT_ID,
+      areteInterno: 'BAJA-1',
+      activo: false,
+      potreroId: null,
+    } as Animal;
+    const mockManager = {
+      getRepository: vi.fn().mockImplementation((entity) => {
+        if (entity === Potrero)
+          return { findOne: vi.fn().mockResolvedValue(potrero) };
+        if (entity === Animal)
+          return {
+            createQueryBuilder: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnThis(),
+              getMany: vi.fn().mockResolvedValue([animalInactivo]),
+            }),
+          };
+        return {};
+      }),
+    } as unknown as EntityManager;
+
+    await expect(
+      service.asignarAnimales(
+        POTRERO_DESTINO_ID,
+        TENANT_ID,
+        USER_ID,
+        { animalIds: [animalInactivo.id] },
+        mockManager,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rechaza un movimiento anterior al último evento para no reescribir la ubicación actual', async () => {
+    const potrero = { id: POTRERO_DESTINO_ID, tenantId: TENANT_ID } as Potrero;
+    const animalActivo = {
+      id: 'animal-activo',
+      tenantId: TENANT_ID,
+      areteInterno: 'ACT-1',
+      activo: true,
+      potreroId: POTRERO_ORIGEN_ID,
+    } as Animal;
+    const mockManager = {
+      getRepository: vi.fn().mockImplementation((entity) => {
+        if (entity === Potrero)
+          return { findOne: vi.fn().mockResolvedValue(potrero) };
+        if (entity === Animal)
+          return {
+            createQueryBuilder: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnThis(),
+              getMany: vi.fn().mockResolvedValue([animalActivo]),
+            }),
+          };
+        if (entity === Evento)
+          return {
+            findOne: vi.fn().mockResolvedValue({ fechaEvento: '2026-10-10' }),
+          };
+        if (entity === EventoMovimiento) return {};
+        return {};
+      }),
+    } as unknown as EntityManager;
+
+    await expect(
+      service.asignarAnimales(
+        POTRERO_DESTINO_ID,
+        TENANT_ID,
+        USER_ID,
+        { animalIds: [animalActivo.id], fecha: '2026-10-09' },
+        mockManager,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
 });
 
 describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (POT-T002)', () => {
@@ -320,6 +400,45 @@ describe('PotrerosService - Separación de Estado Operativo y Carga Derivada (PO
     expect(resultado.estadoOperativo).toBe('OCUPADO');
     expect(resultado.estadoCalculado).toBe('OCUPADO');
     expect(resultado.cargaActualUaHa).toBe(0.5);
+  });
+
+  it('excluye animales dados de baja del inventario y de la carga actual', async () => {
+    const potreroConBaja = {
+      id: 'potrero-baja',
+      tenantId: TENANT_ID,
+      nombre: 'Potrero con historial',
+      areaHa: 1,
+      capacidadRecomendadaUaHa: 2,
+      diasDescansoRecomendados: 30,
+      estadoManual: null,
+      animales: [
+        { id: 'activo', categoria: 'Vaca', activo: true },
+        {
+          id: 'baja',
+          categoria: 'Toro',
+          activo: false,
+          tipoBaja: 'Fallecimiento',
+        },
+      ],
+    } as unknown as Potrero;
+
+    const mockManager = {
+      getRepository: vi.fn().mockReturnValue({
+        findOne: vi.fn().mockResolvedValue(potreroConBaja),
+      }),
+    } as unknown as EntityManager;
+
+    const resultado = await service.findOne(
+      'potrero-baja',
+      TENANT_ID,
+      mockManager,
+    );
+
+    expect(resultado.animales).toHaveLength(1);
+    expect(resultado.animales?.[0].id).toBe('activo');
+    expect(resultado.animalesAsignadosCount).toBe(1);
+    expect(resultado.uaTotal).toBe(1);
+    expect(resultado.cargaActualUaHa).toBe(1);
   });
 
   it('deriva estadoOperativo como "EN RECUPERACIÓN" si no tiene animales y no ha cumplido el descanso', async () => {
