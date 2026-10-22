@@ -77,6 +77,7 @@ export class ReproductiveService {
   constructor(
     private readonly calculationService: ReproductiveCalculationService,
     private readonly stateService: ReproductiveStateService,
+    private readonly animalesService: AnimalesService,
   ) {}
 
   /**
@@ -331,20 +332,16 @@ export class ReproductiveService {
       }
     }
 
-    if (dto.criaAnimalId) {
-      if (dto.criaAnimalId === animalId) {
-        throw new BadRequestException(
-          'La cría no puede ser el mismo animal que parió.',
-        );
-      }
-      const cria = await manager.findOne(Animal, {
-        where: { id: dto.criaAnimalId, tenantId },
-      });
-      if (!cria) {
-        throw new NotFoundException(
-          `La cría con ID '${dto.criaAnimalId}' no fue encontrada en este tenant.`,
-        );
-      }
+    if (dto.facilidadParto === 'Aborto' && (dto.criaAnimalId || dto.nuevaCria)) {
+      throw new BadRequestException(
+        'Un parto con desenlace de Aborto no puede registrar cría viable.',
+      );
+    }
+
+    if (dto.criaAnimalId && dto.nuevaCria) {
+      throw new BadRequestException(
+        'No es posible enviar simultáneamente criaAnimalId y nuevaCria.',
+      );
     }
 
     return manager.transaction(async (trx) => {
@@ -407,12 +404,28 @@ export class ReproductiveService {
         }),
       );
 
+      // RF-004: Alta o vinculación de cría dentro de la misma transacción atómica
+      let criaAnimalId: string | null = null;
+      if (dto.criaAnimalId || dto.nuevaCria) {
+        const cria = await this.animalesService.crearOValidarCriaParaParto(
+          tenantId,
+          animalId,
+          {
+            criaAnimalId: dto.criaAnimalId,
+            nuevaCria: dto.nuevaCria,
+          },
+          dto.fechaEvento,
+          trx,
+        );
+        criaAnimalId = cria ? cria.id : null;
+      }
+
       const parto = await trx.save(
         EventoParto,
         trx.create(EventoParto, {
           eventoId: evento.id,
           eventoServicioId: dto.eventoServicioId ?? null,
-          criaAnimalId: dto.criaAnimalId ?? null,
+          criaAnimalId: criaAnimalId ?? null,
           facilidadParto: dto.facilidadParto ?? null,
           observaciones: dto.observaciones ?? null,
         }),

@@ -15,6 +15,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
   let service: ReproductiveService;
   let calculationService: ReproductiveCalculationService;
   let stateService: ReproductiveStateService;
+  let mockAnimalesService: any;
   let mockEntityManager: EntityManager;
 
   const tenantA = '270d197a-ce3f-4372-8c33-3ea62600e5fa';
@@ -92,7 +93,10 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       ),
     } as unknown as EntityManager;
 
-    service = new ReproductiveService(calculationService, stateService);
+    mockAnimalesService = {
+      crearOValidarCriaParaParto: vi.fn().mockResolvedValue(null),
+    };
+    service = new ReproductiveService(calculationService, stateService, mockAnimalesService);
   });
 
   describe('registrarServicio', () => {
@@ -459,6 +463,135 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
 
       expect(result.evento.tipo).toBe('PARTO');
       expect(result.parto.facilidadParto).toBe('Normal');
+      expect(result.parto.criaAnimalId).toBeNull();
+    });
+
+    it('debe registrar parto con alta inmediata de nueva cría atómica (RF-004 / OBS-003)', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+      estadoPrenada();
+
+      mockAnimalesService.crearOValidarCriaParaParto.mockResolvedValueOnce({
+        id: 'cria-nueva-uuid-999',
+        areteInterno: 'CR-2026-001',
+      });
+
+      const dto: any = {
+        fechaEvento: '2026-09-07',
+        facilidadParto: 'Normal' as const,
+        nuevaCria: {
+          areteInterno: 'CR-2026-001',
+          sexo: 'Hembra',
+        },
+      };
+
+      const result = await service.registrarParto(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        dto,
+        mockEntityManager,
+      );
+
+      expect(mockAnimalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
+        tenantA,
+        mockVacaA.id!,
+        { criaAnimalId: undefined, nuevaCria: dto.nuevaCria },
+        '2026-09-07',
+        expect.anything(),
+      );
+      expect(result.evento.tipo).toBe('PARTO');
+      expect(result.parto.criaAnimalId).toBe('cria-nueva-uuid-999');
+    });
+
+    it('debe registrar parto vinculando una cría existente (OBS-003)', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+      estadoPrenada();
+
+      mockAnimalesService.crearOValidarCriaParaParto.mockResolvedValueOnce({
+        id: 'cria-existente-uuid-123',
+        areteInterno: '105',
+      });
+
+      const dto: any = {
+        fechaEvento: '2026-09-07',
+        facilidadParto: 'Normal' as const,
+        criaAnimalId: 'cria-existente-uuid-123',
+      };
+
+      const result = await service.registrarParto(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        dto,
+        mockEntityManager,
+      );
+
+      expect(result.parto.criaAnimalId).toBe('cria-existente-uuid-123');
+    });
+
+    it('rechaza registrar cría cuando el desenlace es Aborto', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+
+      const dtoConNuevaCria: any = {
+        fechaEvento: '2026-09-07',
+        facilidadParto: 'Aborto' as const,
+        nuevaCria: { areteInterno: 'CR-001' },
+      };
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          dtoConNuevaCria,
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError('Un parto con desenlace de Aborto no puede registrar cría viable.');
+
+      const dtoConCriaExistente: any = {
+        fechaEvento: '2026-09-07',
+        facilidadParto: 'Aborto' as const,
+        criaAnimalId: 'cria-uuid',
+      };
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          dtoConCriaExistente,
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError('Un parto con desenlace de Aborto no puede registrar cría viable.');
+    });
+
+    it('rechaza si se envían criaAnimalId y nuevaCria simultáneamente', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+
+      const dtoDoble: any = {
+        fechaEvento: '2026-09-07',
+        facilidadParto: 'Normal' as const,
+        criaAnimalId: 'cria-uuid',
+        nuevaCria: { areteInterno: 'CR-001' },
+      };
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          dtoDoble,
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError('No es posible enviar simultáneamente criaAnimalId y nuevaCria.');
     });
 
     it('acepta el parto también desde "En Secado"', async () => {

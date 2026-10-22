@@ -1,5 +1,7 @@
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DatosNuevaCriaPartoDto } from '../../animales/dto/parto-cria.dto.js';
 import {
   FACILIDADES_PARTO,
   type FacilidadParto,
@@ -31,6 +33,16 @@ export class RegistrarPartoDto {
   @IsUUID('4', { message: 'El criaAnimalId debe ser un UUID válido' })
   @IsOptional()
   criaAnimalId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Datos de la nueva cría recién nacida a registrar en la misma transacción del parto (opcional)',
+    type: () => DatosNuevaCriaPartoDto,
+  })
+  @ValidateNested()
+  @Type(() => DatosNuevaCriaPartoDto)
+  @IsOptional()
+  nuevaCria?: DatosNuevaCriaPartoDto;
 
   @ApiPropertyOptional({
     description:
