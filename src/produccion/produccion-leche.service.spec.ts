@@ -368,4 +368,124 @@ describe('ProduccionLecheService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
+
+  describe('importarLote (OBS-004)', () => {
+    it('importa múltiples registros válidos y calcula totales comerciales y de descarte', async () => {
+      const animal1 = { id: 'uuid-1', tenantId: TENANT, sexo: 'Hembra', areteInterno: '101' };
+      const animal2 = { id: 'uuid-2', tenantId: TENANT, sexo: 'Hembra', areteInterno: '102' };
+
+      findOne.mockImplementation(async (cls: unknown, opts: any) => {
+        if (cls === Animal) {
+          if (opts?.where?.areteInterno === '101') return animal1;
+          if (opts?.where?.areteInterno === '102') return animal2;
+          return null;
+        }
+        if (cls === EventoProduccionLeche) return null;
+        return null;
+      });
+
+      const r = await service.importarLote(
+        TENANT,
+        USER,
+        {
+          filas: [
+            { fecha: hoy, turno: 'Mañana', areteInterno: '101', litros: 15.5 },
+            { fecha: hoy, turno: 'Mañana', areteInterno: '102', litros: 20 },
+          ] as any,
+        },
+        manager,
+      );
+
+      expect(r.totalImportados).toBe(2);
+      expect(r.litrosTotales).toBe(35.5);
+      expect(r.litrosComercializables).toBe(35.5);
+      expect(r.litrosDescarte).toBe(0);
+      expect(r.registros).toHaveLength(2);
+    });
+
+    it('bloquea el lote completo si hay registros duplicados en el mismo archivo', async () => {
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [
+              { fecha: hoy, turno: 'Mañana', areteInterno: '101', litros: 10 },
+              { fecha: hoy, turno: 'Mañana', areteInterno: '101', litros: 12 },
+            ] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('falla con 404 y número de fila si el animal no existe o no está activo', async () => {
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Animal) return null;
+        return null;
+      });
+
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [{ fecha: hoy, turno: 'Mañana', areteInterno: '999', litros: 10 }] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(/Fila 1: No se encontró un animal activo/);
+    });
+
+    it('falla si el animal es macho', async () => {
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Animal) return { id: 'macho-1', areteInterno: 'M-1', sexo: 'Macho', tenantId: TENANT };
+        return null;
+      });
+
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [{ fecha: hoy, turno: 'Mañana', areteInterno: 'M-1', litros: 10 }] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(/es macho/);
+    });
+
+    it('falla si la hembra no está en lactancia', async () => {
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Animal) return { id: 'vaca-1', areteInterno: 'V-1', sexo: 'Hembra', tenantId: TENANT };
+        return null;
+      });
+      estadoDe.mockResolvedValueOnce({ enLactancia: false });
+
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [{ fecha: hoy, turno: 'Mañana', areteInterno: 'V-1', litros: 10 }] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(/no está en lactancia/);
+    });
+
+    it('falla si la fecha es futura', async () => {
+      const fechaFutura = addCalendarDays(hoy, 2);
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [{ fecha: fechaFutura, turno: 'Mañana', areteInterno: '101', litros: 10 }] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(/posterior a hoy/);
+  });
+});
 });

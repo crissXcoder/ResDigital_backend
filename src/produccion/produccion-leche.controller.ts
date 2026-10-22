@@ -19,6 +19,8 @@ import {
   AnulacionProduccionResponseDto,
   AnularProduccionDto,
   CreateProduccionLecheDto,
+  ImportarProduccionLecheLoteDto,
+  ImportarLoteResponseDto,
   ProduccionLecheResponseDto,
   ResumenProduccionDto,
   ResumenProduccionQueryDto,
@@ -29,6 +31,23 @@ import {
 @Controller('produccion-leche')
 export class ProduccionLecheController {
   constructor(private readonly produccionService: ProduccionLecheService) {}
+
+
+  @Post('lote')
+  @Roles('propietario', 'administrador', 'peon')
+  @ApiResponse({ status: 201, type: ImportarLoteResponseDto })
+  importarLote(
+    @Body() dto: ImportarProduccionLecheLoteDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.produccionService.importarLote(
+      user.tenantId,
+      user.userId,
+      dto,
+      manager,
+    );
+  }
 
   @Post()
   @Roles('propietario', 'administrador', 'peon')
