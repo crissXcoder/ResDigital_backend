@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { ReproductiveService } from '../services/reproductive.service.js';
 import { ReproductiveCalculationService } from '../services/reproductive-calculation.service.js';
 import { ReproductiveStateService } from '../services/reproductive-state.service.js';
+import { AnimalesService } from '../../animales/animales.service.js';
 import { Animal } from '../../animales/entities/animal.entity.js';
 import { Evento } from '../../eventos/entities/evento.entity.js';
 import { EventoServicio } from '../entities/evento-servicio.entity.js';
@@ -15,6 +20,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
   let service: ReproductiveService;
   let calculationService: ReproductiveCalculationService;
   let stateService: ReproductiveStateService;
+  let animalesService: AnimalesService;
   let mockEntityManager: EntityManager;
 
   const tenantA = '270d197a-ce3f-4372-8c33-3ea62600e5fa';
@@ -92,7 +98,15 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       ),
     } as unknown as EntityManager;
 
-    service = new ReproductiveService(calculationService, stateService);
+    animalesService = {
+      crearOValidarCriaParaParto: vi.fn(async () => null),
+    } as unknown as AnimalesService;
+
+    service = new ReproductiveService(
+      calculationService,
+      stateService,
+      animalesService,
+    );
   });
 
   describe('registrarServicio', () => {
@@ -459,6 +473,125 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
 
       expect(result.evento.tipo).toBe('PARTO');
       expect(result.parto.facilidadParto).toBe('Normal');
+      expect(result.parto.criaAnimalId).toBeNull();
+      expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
+        tenantA,
+        mockVacaA.id,
+        { criaAnimalId: undefined, nuevaCria: undefined },
+        '2026-09-07',
+        mockEntityManager,
+      );
+    });
+
+    it('persiste el id que devuelve el contrato al dar de alta una cría nueva', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+      estadoPrenada();
+      vi.mocked(animalesService.crearOValidarCriaParaParto).mockResolvedValue({
+        id: 'cria-nueva-uuid',
+      } as Animal);
+
+      const result = await service.registrarParto(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        {
+          fechaEvento: '2026-09-07',
+          nuevaCria: { areteInterno: 'CR-2026-001' },
+        },
+        mockEntityManager,
+      );
+
+      expect(result.parto.criaAnimalId).toBe('cria-nueva-uuid');
+      expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
+        tenantA,
+        mockVacaA.id,
+        {
+          criaAnimalId: undefined,
+          nuevaCria: { areteInterno: 'CR-2026-001' },
+        },
+        '2026-09-07',
+        mockEntityManager,
+      );
+    });
+
+    it('reenvía criaAnimalId al contrato y persiste el id resultante', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+      estadoPrenada();
+      vi.mocked(animalesService.crearOValidarCriaParaParto).mockResolvedValue({
+        id: 'cria-existente-uuid',
+      } as Animal);
+
+      const result = await service.registrarParto(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        {
+          fechaEvento: '2026-09-07',
+          criaAnimalId: 'cria-existente-uuid',
+        },
+        mockEntityManager,
+      );
+
+      expect(result.parto.criaAnimalId).toBe('cria-existente-uuid');
+      expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
+        tenantA,
+        mockVacaA.id,
+        { criaAnimalId: 'cria-existente-uuid', nuevaCria: undefined },
+        '2026-09-07',
+        mockEntityManager,
+      );
+    });
+
+    it('rechaza ambas modalidades a la vez y no guarda el parto', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-09-07',
+            criaAnimalId: 'cria-existente-uuid',
+            nuevaCria: { areteInterno: 'CR-01' },
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(animalesService.crearOValidarCriaParaParto).not.toHaveBeenCalled();
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('no persiste el parto si el contrato de cría falla', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+      estadoPrenada();
+      vi.mocked(animalesService.crearOValidarCriaParaParto).mockRejectedValue(
+        new ConflictException(
+          'Ya existe un animal con el arete interno "CR-DUP" en esta finca.',
+        ),
+      );
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-09-07',
+            nuevaCria: { areteInterno: 'CR-DUP' },
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(ConflictException);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
     });
 
     it('acepta el parto también desde "En Secado"', async () => {

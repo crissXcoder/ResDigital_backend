@@ -33,6 +33,12 @@ export class DetallePartoDto {
   eventoServicioId: string | null;
   @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
   criaAnimalId: string | null;
+  @ApiProperty({
+    type: 'string',
+    nullable: true,
+    description: 'Arete interno de la cría vinculada, si se pudo resolver en esta finca.',
+  })
+  criaAreteInterno: string | null;
   @ApiProperty({ type: 'string', enum: FACILIDADES_PARTO, nullable: true })
   facilidadParto: string | null;
   @ApiProperty({ type: 'string', nullable: true })
@@ -117,6 +123,7 @@ export function aHistorialDto(
     detalle = {
       eventoServicioId: parto.eventoServicioId,
       criaAnimalId: parto.criaAnimalId,
+      criaAreteInterno: parto.criaAnimal?.areteInterno ?? null,
       facilidadParto: parto.facilidadParto,
       observaciones: parto.observaciones,
     };

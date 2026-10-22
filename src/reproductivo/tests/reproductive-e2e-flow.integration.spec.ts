@@ -11,6 +11,8 @@ import { dataSourceOptions } from '../../database/data-source.js';
 import { ReproductiveService } from '../services/reproductive.service.js';
 import { ReproductiveCalculationService } from '../services/reproductive-calculation.service.js';
 import { ReproductiveStateService } from '../services/reproductive-state.service.js';
+import { AnimalesService } from '../../animales/animales.service.js';
+import type { AnimalDocumentStorageService } from '../../animales/animal-document-storage.service.js';
 import { Animal } from '../../animales/entities/animal.entity.js';
 import { CatalogoRaza } from '../../catalogos/entities/catalogo-raza.entity.js';
 import { Evento } from '../../eventos/entities/evento.entity.js';
@@ -67,7 +69,14 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
 
     const calcService = new ReproductiveCalculationService();
     const stateService = new ReproductiveStateService(calcService);
-    reproService = new ReproductiveService(calcService, stateService);
+    const animalesService = new AnimalesService(
+      {} as AnimalDocumentStorageService,
+    );
+    reproService = new ReproductiveService(
+      calcService,
+      stateService,
+      animalesService,
+    );
 
     // 1. Crear tenant de prueba (parametrizado, sin interpolar en el SQL)
     await insertarTenants(adminSource, { tenantA: tenantId, tenantB });
