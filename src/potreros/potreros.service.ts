@@ -75,7 +75,7 @@ export class PotrerosService {
     // La FK animal.potrero_id es ON DELETE NO ACTION: sin esta comprobación el
     // borrado reventaba con un error de integridad referencial y salía como 500.
     const animalesAsignados = await manager.count(Animal, {
-      where: { potreroId: id, tenantId },
+      where: { potreroId: id, tenantId, activo: true },
     });
     if (animalesAsignados > 0) {
       throw new ConflictException(
@@ -130,13 +130,41 @@ export class PotrerosService {
 
       if (animales.length !== idsUnicos.length) {
         throw new BadRequestException(
-          'Uno o más animales proporcionados no existen o no pertenecen al tenant actual.',
+          'Uno o más animales proporcionados no existen, no pertenecen a esta finca o están dados de baja.',
+        );
+      }
+      if (animales.some((animal) => animal.activo === false)) {
+        throw new BadRequestException(
+          'Los animales dados de baja no pueden asignarse ni moverse entre potreros.',
         );
       }
 
       // Registro atómico de trazabilidad histórica para cada animal movilizado
       for (const animal of animales) {
         const potreroAnteriorId = animal.potreroId ?? null;
+
+        if (potreroAnteriorId === id) {
+          throw new ConflictException(
+            `El animal '${animal.areteInterno}' ya se encuentra en el potrero destino.`,
+          );
+        }
+
+        if (dto.fecha) {
+          const ultimoMovimiento = await repoEvento.findOne({
+            where: {
+              tenantId,
+              animalId: animal.id,
+              tipo: 'MOVIMIENTO',
+              revertido: false,
+            },
+            order: { fechaEvento: 'DESC', fechaRegistro: 'DESC' },
+          });
+          if (ultimoMovimiento && fechaEvento < ultimoMovimiento.fechaEvento) {
+            throw new ConflictException(
+              `El movimiento de '${animal.areteInterno}' no puede fecharse antes de su último movimiento (${ultimoMovimiento.fechaEvento}).`,
+            );
+          }
+        }
 
         // 1. Crear evento maestro
         const evento = repoEvento.create({
@@ -266,21 +294,25 @@ export class PotrerosService {
     let uaPorPeso = 0;
     let uaPorCategoria = 0;
 
+    // La ubicación histórica puede conservar referencias antiguas, pero una
+    // baja nunca forma parte del inventario ni de la carga actual del potrero.
     const animalesEnriquecidos =
-      potrero.animales?.map((a) => {
-        const { ua, metodo } = calcularUaAnimal(a);
-        uaTotal += ua;
-        if (metodo === 'PESO') {
-          uaPorPeso += ua;
-        } else {
-          uaPorCategoria += ua;
-        }
-        return {
-          ...a,
-          uaCalculada: ua,
-          metodoCalculoUa: metodo,
-        };
-      }) || [];
+      potrero.animales
+        ?.filter((a) => a.activo !== false)
+        .map((a) => {
+          const { ua, metodo } = calcularUaAnimal(a);
+          uaTotal += ua;
+          if (metodo === 'PESO') {
+            uaPorPeso += ua;
+          } else {
+            uaPorCategoria += ua;
+          }
+          return {
+            ...a,
+            uaCalculada: ua,
+            metodoCalculoUa: metodo,
+          };
+        }) || [];
 
     uaTotal = Number(uaTotal.toFixed(2));
     uaPorPeso = Number(uaPorPeso.toFixed(2));

@@ -20,9 +20,16 @@ import { TratamientosService } from '../tratamientos/tratamientos.service.js';
 import { EventoProduccionLeche } from './entities/evento-produccion-leche.entity.js';
 import { LactanciaService } from './lactancia.service.js';
 import { ProduccionLecheService } from './produccion-leche.service.js';
+import {
+  crearAdminDataSource,
+  insertarTenants,
+  insertarUsuario,
+  limpiarTenants,
+} from '../test-utils/integration-tenant.js';
 
 describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
   let dataSource: DataSource;
+  let adminSource: DataSource;
   const lactancia = new LactanciaService(
     new ReproductiveStateService(new ReproductiveCalculationService()),
   );
@@ -82,17 +89,29 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
       ],
     });
     await dataSource.initialize();
+    adminSource = crearAdminDataSource([
+      CatalogoRaza,
+      Animal,
+      Potrero,
+      Evento,
+      EventoServicio,
+      EventoDiagnostico,
+      EventoParto,
+      EventoSecado,
+      EventoTratamiento,
+      EventoProduccionLeche,
+      Medicamento,
+      Padecimiento,
+    ]);
+    await adminSource.initialize();
+    await insertarTenants(adminSource, { tenantA, tenantB });
+    await insertarUsuario(adminSource, tenantA, userTenantA);
+    await insertarUsuario(adminSource, tenantB, userTenantB);
 
-    await dataSource.query(`
-      INSERT INTO tenant (id, nombre_finca, created_at)
-      VALUES ('${tenantA}', 'TEST RLS LECHE A', NOW()), ('${tenantB}', 'TEST RLS LECHE B', NOW())
-      ON CONFLICT (id) DO NOTHING;
-    `);
-
-    const raza = await dataSource.getRepository(CatalogoRaza).findOne({ where: {} });
+    const raza = await adminSource.getRepository(CatalogoRaza).findOne({ where: {} });
     if (!raza) throw new Error('Se requiere al menos una raza en catalogo_raza.');
 
-    const animalRepo = dataSource.getRepository(Animal);
+    const animalRepo = adminSource.getRepository(Animal);
     const animalA = await animalRepo.save({
       tenantId: tenantA,
       areteInterno: ARETE_A,
@@ -134,17 +153,11 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
   });
 
   afterAll(async () => {
-    if (!dataSource?.isInitialized) return;
-    const animales = `SELECT id FROM animal WHERE arete_interno IN ('${ARETE_A}', '${ARETE_B}')`;
-    await dataSource.query(`
-      DELETE FROM evento_produccion_leche WHERE evento_id IN (SELECT id FROM evento WHERE animal_id IN (${animales}));
-      DELETE FROM evento_tratamiento WHERE evento_id IN (SELECT id FROM evento WHERE animal_id IN (${animales}));
-      UPDATE evento SET evento_corrige_id = NULL WHERE animal_id IN (${animales});
-      DELETE FROM evento WHERE animal_id IN (${animales});
-      DELETE FROM animal WHERE arete_interno IN ('${ARETE_A}', '${ARETE_B}');
-      DELETE FROM tenant WHERE id IN ('${tenantA}', '${tenantB}');
-    `);
-    await dataSource.destroy();
+    if (adminSource?.isInitialized) {
+      await limpiarTenants(adminSource, [tenantA, tenantB]);
+      await adminSource.destroy();
+    }
+    if (dataSource?.isInitialized) await dataSource.destroy();
   });
 
   it('evento_produccion_leche tiene RLS forzado y política EXISTS heredada de evento', async () => {

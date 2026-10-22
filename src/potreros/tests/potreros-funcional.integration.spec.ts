@@ -75,6 +75,22 @@ describe('Potreros Funcional & Regresión (Integration)', () => {
   });
 
   beforeEach(async () => {
+    await adminSource.query(
+      `DELETE FROM evento_movimiento
+       WHERE evento_id IN (SELECT id FROM evento WHERE tenant_id = ANY($1))`,
+      [[tenantA, tenantB]],
+    );
+    await adminSource.query(
+      'UPDATE evento SET evento_corrige_id = NULL WHERE tenant_id = ANY($1)',
+      [[tenantA, tenantB]],
+    );
+    await adminSource.query('DELETE FROM evento WHERE tenant_id = ANY($1)', [
+      [tenantA, tenantB],
+    ]);
+    await adminSource.query(
+      'UPDATE animal SET madre_id = NULL, padre_id = NULL, potrero_id = NULL WHERE tenant_id = ANY($1)',
+      [[tenantA, tenantB]],
+    );
     await adminSource.query('DELETE FROM animal WHERE tenant_id = ANY($1)', [
       [tenantA, tenantB],
     ]);
@@ -132,7 +148,7 @@ describe('Potreros Funcional & Regresión (Integration)', () => {
 
       expect(p1Check1.body.cargaActualUaHa).toBeCloseTo(0.3, 1); // 3 UA / 10 Ha
       expect(p1Check1.body.animalesAsignadosCount).toBe(4);
-      expect(p1Check1.body.estadoCalculado).toBe('DISPONIBLE'); // 0.3 < 1.0
+      expect(p1Check1.body.estadoCalculado).toBe('OCUPADO');
 
       // 3. Ejecutar Traslado (P1 -> P2)
       const trasladoRes = await request(app.getHttpServer())
@@ -153,9 +169,9 @@ describe('Potreros Funcional & Regresión (Integration)', () => {
       const p2Check1 = await request(app.getHttpServer())
         .get(`/potreros/${p2Id}`)
         .set('Authorization', `Bearer ${tokenPropietarioA}`);
-      expect(p2Check1.body.cargaActualUaHa).toBeCloseTo(0.6, 1); // 3 UA / 5 Ha
+      expect(p2Check1.body.cargaActualUaHa).toBe(0.54); // 2.7 UA / 5 Ha
       expect(p2Check1.body.animalesAsignadosCount).toBe(4);
-      expect(p2Check1.body.estadoCalculado).toBe('DISPONIBLE'); // 0.6 < 1.0
+      expect(p2Check1.body.estadoCalculado).toBe('OCUPADO');
 
       // 6. Verificar a nivel de Animal que apuntan al nuevo potrero
       const aCheck = await request(app.getHttpServer())
@@ -182,7 +198,7 @@ describe('Potreros Funcional & Regresión (Integration)', () => {
         'SELECT id FROM catalogo_raza WHERE tenant_id IS NULL LIMIT 1',
       );
 
-      // Crear 2 Toros = 2 UA directamente en DB
+      // Crear 2 toros = 2.5 UA directamente en DB (1.25 UA por categoría)
       await adminSource.query(
         `INSERT INTO animal (tenant_id, nombre, arete_interno, sexo, categoria, raza_id, potrero_id, fecha_nacimiento)
          VALUES 
@@ -194,7 +210,7 @@ describe('Potreros Funcional & Regresión (Integration)', () => {
         .get(`/potreros/${p1Id}`)
         .set('Authorization', `Bearer ${tokenPropietarioA}`);
 
-      expect(p1Check.body.cargaActualUaHa).toBe(2); // 2 UA / 1 Ha = 2
+      expect(p1Check.body.cargaActualUaHa).toBe(2.5);
       expect(p1Check.body.estadoCalculado).toBe('SOBRECARGADO');
     });
   });

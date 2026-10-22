@@ -129,6 +129,12 @@ export class ProduccionLecheService {
       const animal = await buscarAnimal(trx, tenantId, dto.animalId);
       const fecha = dto.fecha.slice(0, 10);
 
+      if (animal.activo === false) {
+        throw new ConflictException(
+          `El animal con arete '${animal.areteInterno}' está dado de baja; no admite registros nuevos de producción.`,
+        );
+      }
+
       const hoy = todayIsoDate();
       if (fecha > hoy) {
         throw new BadRequestException(
