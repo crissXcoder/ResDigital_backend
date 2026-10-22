@@ -256,7 +256,10 @@ export class ReproductiveStateService {
     const [servicios, diagnosticos, partos, secados] = await Promise.all([
       manager.find(EventoServicio, { where: { eventoId: In(ids) } }),
       manager.find(EventoDiagnostico, { where: { eventoId: In(ids) } }),
-      manager.find(EventoParto, { where: { eventoId: In(ids) } }),
+      manager.find(EventoParto, {
+        where: { eventoId: In(ids) },
+        relations: { criaAnimal: true },
+      }),
       manager.find(EventoSecado, { where: { eventoId: In(ids) } }),
     ]);
 

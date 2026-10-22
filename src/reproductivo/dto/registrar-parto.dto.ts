@@ -1,4 +1,11 @@
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DatosNuevaCriaPartoDto } from '../../animales/dto/parto-cria.dto.js';
@@ -6,6 +13,7 @@ import {
   FACILIDADES_PARTO,
   type FacilidadParto,
 } from '../entities/evento-parto.entity.js';
+import { CriaModalidadesExcluyentes } from './validators/cria-modalidad.validator.js';
 import { EsFechaDeEvento } from './validators/fecha-evento.validator.js';
 
 export class RegistrarPartoDto {
@@ -27,17 +35,18 @@ export class RegistrarPartoDto {
 
   @ApiPropertyOptional({
     description:
-      'ID del animal registrado como cría recién nacida (si ya fue registrado en el hato)',
+      'ID del animal registrado como cría recién nacida (si ya fue registrado en el hato). Mutuamente excluyente con nuevaCria.',
     example: 'e1d67412-21d9-482f-870d-f55da282b810',
   })
   @IsUUID('4', { message: 'El criaAnimalId debe ser un UUID válido' })
   @IsOptional()
+  @CriaModalidadesExcluyentes()
   criaAnimalId?: string;
 
   @ApiPropertyOptional({
     description:
-      'Datos de la nueva cría recién nacida a registrar en la misma transacción del parto (opcional)',
-    type: () => DatosNuevaCriaPartoDto,
+      'Datos para dar de alta la cría en la misma transacción del parto. Mutuamente excluyente con criaAnimalId.',
+    type: DatosNuevaCriaPartoDto,
   })
   @ValidateNested()
   @Type(() => DatosNuevaCriaPartoDto)
