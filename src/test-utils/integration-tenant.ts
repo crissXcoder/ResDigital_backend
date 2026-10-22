@@ -164,6 +164,9 @@ export async function insertarTenants(
  * acotan por su evento padre.
  */
 const DETALLES_REPRODUCTIVOS = [
+  'evento_produccion_leche',
+  'evento_tratamiento',
+  'evento_movimiento',
   'evento_servicio',
   'evento_diagnostico',
   'evento_parto',
@@ -213,6 +216,13 @@ export async function limpiarTenants(
     await dataSource.query(
       `UPDATE animal SET madre_id = NULL, padre_id = NULL, potrero_id = NULL
        WHERE tenant_id = ANY($1);`,
+      [tenantIds],
+    );
+  }
+
+  if (await tablaExiste(dataSource, 'evento')) {
+    await dataSource.query(
+      `UPDATE evento SET evento_corrige_id = NULL WHERE tenant_id = ANY($1);`,
       [tenantIds],
     );
   }

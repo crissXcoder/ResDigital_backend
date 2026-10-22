@@ -103,6 +103,15 @@ describe('LactanciaService', () => {
       expect(find).not.toHaveBeenCalled();
     });
 
+    it('un animal dado de baja reporta estado actual no lactante sin borrar eventos históricos', async () => {
+      animales = [{ ...animal('v1'), activo: false }];
+      eventos = [evento('p1', 'v1', 'PARTO', hace(40))];
+      const estado = await service.getEstado(TENANT, 'v1', manager);
+      expect(estado.enLactancia).toBe(false);
+      expect(find).not.toHaveBeenCalled();
+      expect(eventos).toHaveLength(1);
+    });
+
     it('animal de otra finca responde 404', async () => {
       await expect(service.getEstado(TENANT, 'ajeno', manager)).rejects.toBeInstanceOf(
         NotFoundException,
@@ -138,6 +147,14 @@ describe('LactanciaService', () => {
   });
 
   describe('inicio de lactancia', () => {
+    it('rechaza iniciar lactancia para un animal dado de baja', async () => {
+      animales = [{ ...animal('v1'), activo: false }];
+      await expect(
+        service.registrarInicio(TENANT, USER, 'v1', { fecha: hace(3) }, manager),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(save).not.toHaveBeenCalled();
+    });
+
     it('registra el inicio para una vaca sin parto', async () => {
       animales = [animal('v1')];
       const r = await service.registrarInicio(TENANT, USER, 'v1', { fecha: hace(3) }, manager);
