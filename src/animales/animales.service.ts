@@ -333,12 +333,13 @@ export class AnimalesService {
         where: {
           tenantId,
           areteInterno: normalizado.areteInterno as string,
+          activo: true,
         },
         select: { id: true },
       });
       if (existenteArete) {
         throw new ConflictException(
-          `Ya existe un animal con el arete interno "${normalizado.areteInterno}" en esta finca.`,
+          `Ya existe un animal activo con el arete interno "${normalizado.areteInterno}" en esta finca.`,
         );
       }
     }
@@ -425,17 +426,20 @@ export class AnimalesService {
       normalizado.areteInterno &&
       normalizado.areteInterno !== animal.areteInterno
     ) {
-      const existenteArete = await manager.findOne(Animal, {
-        where: {
-          tenantId,
-          areteInterno: normalizado.areteInterno as string,
-        },
-        select: { id: true },
-      });
-      if (existenteArete && existenteArete.id !== id) {
-        throw new ConflictException(
-          `Ya existe un animal con el arete interno "${normalizado.areteInterno}" en esta finca.`,
-        );
+      if (animal.activo) {
+        const existenteArete = await manager.findOne(Animal, {
+          where: {
+            tenantId,
+            areteInterno: normalizado.areteInterno as string,
+            activo: true,
+          },
+          select: { id: true },
+        });
+        if (existenteArete && existenteArete.id !== id) {
+          throw new ConflictException(
+            `Ya existe un animal activo con el arete interno "${normalizado.areteInterno}" en esta finca.`,
+          );
+        }
       }
     }
 
@@ -775,12 +779,12 @@ export class AnimalesService {
       }
 
       const existenteArete = await manager.findOne(Animal, {
-        where: { tenantId, areteInterno: arete },
+        where: { tenantId, areteInterno: arete, activo: true },
         select: { id: true },
       });
       if (existenteArete) {
         throw new ConflictException(
-          `Ya existe un animal con el arete interno "${arete}" en esta finca.`,
+          `Ya existe un animal activo con el arete interno "${arete}" en esta finca.`,
         );
       }
 
@@ -884,4 +888,65 @@ export class AnimalesService {
     return null;
   }
 
+/**
+   * Reactiva un animal previamente dado de baja (ej. error operativo o reingreso).
+   *
+   * Reglas:
+   * 1. El animal debe estar actualmente inactivo.
+   * 2. Si su arete interno fue reutilizado cronológicamente por otro animal activo en la finca,
+   *    la reactivación falla con ConflictException (409) para proteger la unicidad activa.
+   * 3. Si posee DIIO oficial, valida que no colisione con otro animal de la finca.
+   * 4. Limpia la proyección de baja preservando su UUID y trazabilidad histórica original.
+   */
+  async reactivar(
+    id: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<Animal> {
+    const animal = await this.findOne(id, tenantId, manager);
+
+    if (animal.activo) {
+      throw new ConflictException('El animal ya se encuentra activo en el hato.');
+    }
+
+    const conflictoArete = await manager.findOne(Animal, {
+      where: {
+        tenantId,
+        areteInterno: animal.areteInterno,
+        activo: true,
+      },
+      select: { id: true, areteInterno: true, nombre: true },
+    });
+
+    if (conflictoArete && conflictoArete.id !== id) {
+      throw new ConflictException(
+        `No es posible reactivar el animal: el arete interno "${animal.areteInterno}" está actualmente en uso por otro animal activo (${conflictoArete.nombre || conflictoArete.id}).`,
+      );
+    }
+
+    if (animal.numeroOficialDiio) {
+      const conflictoDiio = await manager.findOne(Animal, {
+        where: {
+          tenantId,
+          numeroOficialDiio: animal.numeroOficialDiio,
+        },
+        select: { id: true },
+      });
+
+      if (conflictoDiio && conflictoDiio.id !== id) {
+        throw new ConflictException(
+          `No es posible reactivar el animal: el número oficial DIIO "${animal.numeroOficialDiio}" ya está asignado a otro animal en esta finca.`,
+        );
+      }
+    }
+
+    animal.activo = true;
+    animal.fechaBaja = null;
+    animal.tipoBaja = null;
+    animal.motivoBaja = null;
+    animal.precioVentaCrc = null;
+    animal.pesoFinalKg = null;
+
+    return await manager.save(animal);
+  }
 }

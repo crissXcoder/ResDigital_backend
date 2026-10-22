@@ -389,8 +389,33 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
     await expect(
       service.create(TENANT_A, dto, mockEntityManager),
     ).rejects.toThrowError(
-      'Ya existe un animal con el arete interno "A001" en esta finca.',
+      'Ya existe un animal activo con el arete interno "A001" en esta finca.',
     );
+  });
+
+  it('permite registrar un nuevo animal con un arete interno reutilizado si el animal previo está inactivo (baja)', async () => {
+    vi.mocked(mockEntityManager.findOne).mockImplementation(async (_entity: any, options: any) => {
+      if (options?.where?.areteInterno === 'A001' && options?.where?.activo === true) {
+        return null;
+      }
+      return null;
+    });
+
+    const dto: any = {
+      nombre: 'Vaca Nueva Reutiliza Arete',
+      areteInterno: 'A001',
+      sexo: 'Hembra',
+      razaId: 'raza-uuid',
+      categoria: 'Vaca',
+    };
+
+    const creado = { id: 'nuevo-animal-uuid', areteInterno: 'A001', activo: true } as Animal;
+    vi.mocked(mockEntityManager.create).mockReturnValue(creado as any);
+    vi.mocked(mockEntityManager.save).mockResolvedValue(creado as any);
+
+    const resultado = await service.create(TENANT_A, dto, mockEntityManager);
+    expect(resultado).toBeDefined();
+    expect(mockEntityManager.save).toHaveBeenCalled();
   });
 
   it('en update: permite conservar el mismo DIIO del propio animal sin dar colisión', async () => {
@@ -1193,6 +1218,70 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
     await expect(
       service.getBajaByAnimal('animal-activo', TENANT_A, mockEntityManager),
     ).rejects.toThrowError(NotFoundException);
+  });
+
+  it('reactivar: reactiva con éxito un animal inactivo si su arete interno está libre', async () => {
+    const animalInactivo = {
+      id: 'animal-inactivo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: false,
+      fechaBaja: '2026-03-01',
+      tipoBaja: 'Venta',
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne)
+      .mockResolvedValueOnce(animalInactivo)
+      .mockResolvedValueOnce(null);
+
+    vi.mocked(mockEntityManager.save).mockImplementation(async (a: any) => a);
+
+    const res = await service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager);
+    expect(res.activo).toBe(true);
+    expect(res.fechaBaja).toBeNull();
+    expect(res.tipoBaja).toBeNull();
+    expect(mockEntityManager.save).toHaveBeenCalled();
+  });
+
+  it('reactivar: rechaza con ConflictException si el animal ya se encuentra activo', async () => {
+    const animalActivo = {
+      id: 'animal-activo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalActivo);
+
+    await expect(
+      service.reactivar('animal-activo-uuid', TENANT_A, mockEntityManager),
+    ).rejects.toThrowError('El animal ya se encuentra activo en el hato.');
+  });
+
+  it('reactivar: rechaza con ConflictException (409) si su arete interno fue reutilizado por otro animal activo', async () => {
+    const animalInactivo = {
+      id: 'animal-inactivo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: false,
+      fechaBaja: '2026-03-01',
+    } as Animal;
+
+    const otroActivo = {
+      id: 'otro-animal-activo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      nombre: 'Novillo B',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne)
+      .mockResolvedValueOnce(animalInactivo)
+      .mockResolvedValueOnce(otroActivo);
+
+    await expect(
+      service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager),
+    ).rejects.toThrowError(/el arete interno "1002" está actualmente en uso por otro animal activo/);
   });
 });
 

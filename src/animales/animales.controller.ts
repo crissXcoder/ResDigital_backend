@@ -117,6 +117,20 @@ export class AnimalesController {
     return this.animalesService.getBajaByAnimal(id, user.tenantId, manager);
   }
 
+  @Post(':id/reactivar')
+  @Roles('propietario', 'administrador')
+  @ApiOperation({ summary: 'Reactivar un animal dado de baja si su arete interno está libre' })
+  @ApiResponse({ status: 200, description: 'Animal reactivado exitosamente en el hato' })
+  @ApiResponse({ status: 404, description: 'Animal no encontrado en esta finca' })
+  @ApiResponse({ status: 409, description: 'El animal ya está activo o su arete interno está en uso por otro animal activo' })
+  reactivar(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.reactivar(id, user.tenantId, manager);
+  }
+
   @Get(':id/documentos')
   @ApiOperation({ summary: 'Listar los documentos privados de un animal' })
   @ApiResponse({ status: 200, type: [DocumentoAnimalResponseDto] })
