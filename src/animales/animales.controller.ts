@@ -20,6 +20,7 @@ import { BajaAnimalDto } from './dto/baja-animal.dto.js';
 import { CreateDocumentoDto } from './dto/create-documento.dto.js';
 import { QueryAnimalDto } from './dto/query-animal.dto.js';
 import { DocumentoAnimalResponseDto } from './dto/documento-animal-response.dto.js';
+import { ComposicionGeneticaResponseDto } from './dto/composicion-genetica.dto.js';
 
 /**
  * Nota: los handlers reciben `@CurrentUser() user: AuthenticatedUser` en vez de
@@ -163,5 +164,45 @@ export class AnimalesController {
       docDto,
       manager,
     );
+  }
+
+  @Get(':id/composicion-genetica')
+  @Roles('propietario', 'administrador', 'veterinario', 'peon')
+  @ApiOperation({
+    summary: 'Calcular la composición genética ponderada del animal',
+  })
+  @ApiResponse({ status: 200, type: ComposicionGeneticaResponseDto })
+  @ApiResponse({
+    status: 404,
+    description: 'Animal no encontrado en esta finca',
+  })
+  getComposicionGenetica(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.calcularComposicionGenetica(
+      id,
+      user.tenantId,
+      manager,
+    );
+  }
+
+  @Get(':id/crias')
+  @Roles('propietario', 'administrador', 'veterinario', 'peon')
+  @ApiOperation({
+    summary: 'Listar la descendencia directa registrada (crías) del animal',
+  })
+  @ApiResponse({ status: 200, description: 'Lista de crías del animal' })
+  @ApiResponse({
+    status: 404,
+    description: 'Animal no encontrado en esta finca',
+  })
+  getCrias(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.obtenerCrias(id, user.tenantId, manager);
   }
 }

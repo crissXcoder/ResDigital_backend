@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { In, LessThanOrEqual, MoreThan, type EntityManager } from 'typeorm';
+import { Between, In, LessThanOrEqual, MoreThan, type EntityManager } from 'typeorm';
 import { Animal } from '../animales/entities/animal.entity.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
@@ -26,6 +26,7 @@ import type {
   ProduccionLecheResponseDto,
   ResumenProduccionDiaDto,
   ResumenProduccionDto,
+  UpdateProduccionLecheDto,
 } from './dto/produccion-leche.dto.js';
 
 export const MAX_DIAS_RESUMEN = 366;
@@ -224,6 +225,48 @@ export class ProduccionLecheService {
     });
   }
 
+  async update(
+    tenantId: string,
+    id: string,
+    dto: UpdateProduccionLecheDto,
+    manager: EntityManager,
+  ): Promise<ProduccionLecheResponseDto> {
+    return manager.transaction(async (trx) => {
+      const evento = await trx.findOne(Evento, {
+        where: { id, tenantId, tipo: 'PRODUCCION_LECHE' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const detalle = evento
+        ? await trx.findOne(EventoProduccionLeche, { where: { eventoId: id } })
+        : null;
+      if (!evento || !detalle) {
+        throw new NotFoundException(`Producción con ID '${id}' no encontrada.`);
+      }
+      if (evento.revertido) {
+        throw new BadRequestException(`No se puede modificar la producción '${id}' porque fue anulada.`);
+      }
+
+      await bloquearAnimalProduccion(trx, evento.animalId);
+
+      detalle.litros = dto.litros;
+      if (dto.notas !== undefined) {
+        evento.notas = dto.notas?.trim() || null;
+        await trx.save(Evento, evento);
+      }
+      await trx.save(EventoProduccionLeche, detalle);
+
+      let fechaLiberacion: string | null = null;
+      if (detalle.tratamientoEventoId) {
+        const tratamiento = await trx.findOne(EventoTratamiento, {
+          where: { eventoId: detalle.tratamientoEventoId },
+        });
+        fechaLiberacion = tratamiento?.fechaLiberacionLeche ?? null;
+      }
+
+      return toResponse(evento, detalle, fechaLiberacion);
+    });
+  }
+
   async anular(
     tenantId: string,
     usuarioId: string,
@@ -303,6 +346,46 @@ export class ProduccionLecheService {
           : null,
       ),
     );
+  }
+
+  async listarRegistros(
+    tenantId: string,
+    manager: EntityManager,
+    desde?: string,
+    hasta?: string,
+  ): Promise<ProduccionLecheResponseDto[]> {
+    const rango = resolverRango(desde, hasta, todayIsoDate());
+    if (rango.error) throw new BadRequestException(rango.error);
+
+    const detalles = await manager.find(EventoProduccionLeche, {
+      relations: { evento: true },
+      where: { evento: {
+        tenantId,
+        tipo: 'PRODUCCION_LECHE',
+        revertido: false,
+        fechaEvento: Between(rango.desde, rango.hasta),
+      } },
+      order: { evento: { fechaEvento: 'DESC', fechaRegistro: 'DESC' } },
+    });
+    const tratamientoIds = [...new Set(detalles
+      .map((d) => d.tratamientoEventoId)
+      .filter((id): id is string => id != null))];
+    const liberaciones = new Map<string, string>();
+    if (tratamientoIds.length > 0) {
+      const tratamientos = await manager.find(EventoTratamiento, {
+        where: { eventoId: In(tratamientoIds) },
+      });
+      for (const tratamiento of tratamientos) {
+        liberaciones.set(tratamiento.eventoId, tratamiento.fechaLiberacionLeche);
+      }
+    }
+    return detalles.map((detalle) => toResponse(
+      detalle.evento,
+      detalle,
+      detalle.tratamientoEventoId
+        ? (liberaciones.get(detalle.tratamientoEventoId) ?? null)
+        : null,
+    ));
   }
 
   async resumen(

@@ -24,6 +24,10 @@ import {
   type CreateDocumentoDto,
 } from './dto/create-documento.dto.js';
 import type { QueryAnimalDto } from './dto/query-animal.dto.js';
+import type {
+  ComposicionGeneticaResponseDto,
+  ComposicionRazaItemDto,
+} from './dto/composicion-genetica.dto.js';
 
 @Injectable()
 export class AnimalesService {
@@ -966,5 +970,212 @@ export class AnimalesService {
     animal.pesoFinalKg = null;
 
     return await manager.save(animal);
+  }
+
+  /**
+   * Obtiene la descendencia directa registrada (crías) de un animal,
+   * donde el animal figura como madre o como padre en la misma finca.
+   */
+  async obtenerCrias(
+    animalId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<Animal[]> {
+    await this.findOne(animalId, tenantId, manager);
+
+    return manager.find(Animal, {
+      where: [
+        { madreId: animalId, tenantId },
+        { padreId: animalId, tenantId },
+      ],
+      relations: { raza: true, potrero: true },
+      order: { fechaNacimiento: 'DESC', areteInterno: 'ASC' },
+    });
+  }
+
+  /**
+   * Calcula la composición racial / genética ponderada de un animal en base
+   * al promedio de las composiciones conocidas de sus progenitores.
+   *
+   * Regla zootécnica (FL-05 e invariantes HATO-T006):
+   * - Animal sin progenitores conocidos: 100% de su propia raza (del catálogo).
+   * - Progenitores conocidos: promedio de sus composiciones parentales conocidas:
+   *   % raza = (madre% + padre%) / 2.
+   * - Si solo un progenitor es conocido: toma la composición del progenitor conocido.
+   * - Prohibido parsear porcentajes desde cadenas de texto / labels.
+   */
+  async calcularComposicionGenetica(
+    animalId: string,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<ComposicionGeneticaResponseDto> {
+    const animal = await manager.findOne(Animal, {
+      where: { id: animalId, tenantId },
+      relations: { raza: true },
+    });
+
+    if (!animal) {
+      throw new NotFoundException(
+        `Animal con ID '${animalId}' no encontrado en esta finca.`,
+      );
+    }
+
+    const { composicion, metodo } = await this.resolverComposicionRecursiva(
+      animal,
+      tenantId,
+      manager,
+      new Set<string>(),
+      0,
+    );
+
+    return {
+      animalId: animal.id,
+      areteInterno: animal.areteInterno,
+      composicion,
+      metodo,
+      progenitoresAnalizados: {
+        madreId: animal.madreId,
+        padreId: animal.padreId,
+        padreExternoDescripcion: animal.padreExternoDescripcion,
+      },
+    };
+  }
+
+  private async resolverComposicionRecursiva(
+    animal: Animal,
+    tenantId: string,
+    manager: EntityManager,
+    visitados: Set<string>,
+    profundidad: number,
+  ): Promise<{
+    composicion: ComposicionRazaItemDto[];
+    metodo:
+      | 'DIRECTO'
+      | 'PROMEDIO_PROGENITORES'
+      | 'PROGENITOR_UNICO'
+      | 'DESCONOCIDO';
+  }> {
+    const MAX_PROFUNDIDAD = 10;
+    if (profundidad >= MAX_PROFUNDIDAD || visitados.has(animal.id)) {
+      return this.obtenerComposicionDirecta(animal);
+    }
+    visitados.add(animal.id);
+
+    // Si no tiene progenitores registrados, retorna 100% de su propia raza
+    if (!animal.madreId && !animal.padreId) {
+      return this.obtenerComposicionDirecta(animal);
+    }
+
+    // Resolver composición de la madre si existe en el tenant
+    let compMadre: ComposicionRazaItemDto[] | null = null;
+    if (animal.madreId) {
+      const madre = await manager.findOne(Animal, {
+        where: { id: animal.madreId, tenantId },
+        relations: { raza: true },
+      });
+      if (madre) {
+        const res = await this.resolverComposicionRecursiva(
+          madre,
+          tenantId,
+          manager,
+          new Set(visitados),
+          profundidad + 1,
+        );
+        compMadre = res.composicion;
+      }
+    }
+
+    // Resolver composición del padre si existe en el tenant
+    let compPadre: ComposicionRazaItemDto[] | null = null;
+    if (animal.padreId) {
+      const padre = await manager.findOne(Animal, {
+        where: { id: animal.padreId, tenantId },
+        relations: { raza: true },
+      });
+      if (padre) {
+        const res = await this.resolverComposicionRecursiva(
+          padre,
+          tenantId,
+          manager,
+          new Set(visitados),
+          profundidad + 1,
+        );
+        compPadre = res.composicion;
+      }
+    }
+
+    // Caso 1: Ambos progenitores conocidos y con composición
+    if (compMadre && compMadre.length > 0 && compPadre && compPadre.length > 0) {
+      const mapa = new Map<
+        string,
+        { razaId: string; nombre: string; suma: number }
+      >();
+
+      for (const item of compMadre) {
+        const actual = mapa.get(item.razaId) || {
+          razaId: item.razaId,
+          nombre: item.nombre,
+          suma: 0,
+        };
+        actual.suma += item.porcentaje / 2;
+        mapa.set(item.razaId, actual);
+      }
+
+      for (const item of compPadre) {
+        const actual = mapa.get(item.razaId) || {
+          razaId: item.razaId,
+          nombre: item.nombre,
+          suma: 0,
+        };
+        actual.suma += item.porcentaje / 2;
+        mapa.set(item.razaId, actual);
+      }
+
+      const composicion = Array.from(mapa.values())
+        .map((x) => ({
+          razaId: x.razaId,
+          nombre: x.nombre,
+          porcentaje: Math.round(x.suma * 100) / 100,
+        }))
+        .filter((x) => x.porcentaje > 0)
+        .sort((a, b) => b.porcentaje - a.porcentaje);
+
+      return { composicion, metodo: 'PROMEDIO_PROGENITORES' };
+    }
+
+    // Caso 2: Solo madre conocida
+    if (compMadre && compMadre.length > 0) {
+      return { composicion: compMadre, metodo: 'PROGENITOR_UNICO' };
+    }
+
+    // Caso 3: Solo padre conocido
+    if (compPadre && compPadre.length > 0) {
+      return { composicion: compPadre, metodo: 'PROGENITOR_UNICO' };
+    }
+
+    // Caso 4: Ningún progenitor dio composición válida
+    return this.obtenerComposicionDirecta(animal);
+  }
+
+  private obtenerComposicionDirecta(animal: Animal): {
+    composicion: ComposicionRazaItemDto[];
+    metodo: 'DIRECTO' | 'DESCONOCIDO';
+  } {
+    if (animal.raza) {
+      return {
+        composicion: [
+          {
+            razaId: animal.raza.id,
+            nombre: animal.raza.nombre,
+            porcentaje: 100,
+          },
+        ],
+        metodo: 'DIRECTO',
+      };
+    }
+    return {
+      composicion: [],
+      metodo: 'DESCONOCIDO',
+    };
   }
 }

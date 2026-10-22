@@ -1,0 +1,80 @@
+﻿import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class ComposicionRazaItemDto {
+  @ApiProperty({
+    description: 'Identificador ├║nico de la raza en el cat├ílogo',
+    format: 'uuid',
+    example: 'a0b9432d-cf48-4be7-a2f0-1a76c66cfcb1',
+  })
+  razaId: string;
+
+  @ApiProperty({
+    description: 'Nombre de la raza oficial',
+    example: 'Holstein',
+  })
+  nombre: string;
+
+  @ApiProperty({
+    description: 'Porcentaje gen├®tico de la raza (0 a 100)',
+    example: 50,
+  })
+  porcentaje: number;
+}
+
+export class ProgenitoresAnalizadosDto {
+  @ApiPropertyOptional({
+    description: 'ID de la madre si est├í registrada en el hato',
+    type: String,
+    format: 'uuid',
+    nullable: true,
+  })
+  madreId: string | null;
+
+  @ApiPropertyOptional({
+    description: 'ID del padre si es un toro registrado en el hato',
+    type: String,
+    format: 'uuid',
+    nullable: true,
+  })
+  padreId: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Descripci├│n o pajilla del padre externo',
+    type: String,
+    nullable: true,
+  })
+  padreExternoDescripcion: string | null;
+}
+
+export class ComposicionGeneticaResponseDto {
+  @ApiProperty({
+    description: 'ID del animal evaluado',
+    format: 'uuid',
+  })
+  animalId: string;
+
+  @ApiProperty({
+    description: 'Arete interno del animal',
+    example: '101',
+  })
+  areteInterno: string;
+
+  @ApiProperty({
+    description: 'Desglose ponderado de la composici├│n gen├®tica por raza',
+    type: [ComposicionRazaItemDto],
+  })
+  composicion: ComposicionRazaItemDto[];
+
+  @ApiProperty({
+    description: 'M├®todo zoot├®cnico utilizado para determinar la composici├│n',
+    enum: ['DIRECTO', 'PROMEDIO_PROGENITORES', 'PROGENITOR_UNICO', 'DESCONOCIDO'],
+    example: 'PROMEDIO_PROGENITORES',
+  })
+  metodo: 'DIRECTO' | 'PROMEDIO_PROGENITORES' | 'PROGENITOR_UNICO' | 'DESCONOCIDO';
+
+  @ApiProperty({
+    description: 'Informaci├│n de los progenitores analizados',
+    type: ProgenitoresAnalizadosDto,
+  })
+  progenitoresAnalizados: ProgenitoresAnalizadosDto;
+}

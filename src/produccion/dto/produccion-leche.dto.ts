@@ -55,6 +55,20 @@ export class CreateProduccionLecheDto {
   notas?: string;
 }
 
+export class UpdateProduccionLecheDto {
+  @ApiProperty({ minimum: 0.1, maximum: MAX_LITROS_TURNO, example: 14.5 })
+  @IsNumber({ maxDecimalPlaces: 1 }, { message: 'litros debe ser un número con a lo sumo un decimal' })
+  @IsPositive({ message: 'litros debe ser mayor que 0' })
+  @Max(MAX_LITROS_TURNO, { message: `litros no puede superar ${MAX_LITROS_TURNO} por turno` })
+  litros: number;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  @IsOptional()
+  notas?: string;
+}
+
 export class AnularProduccionDto {
   @ApiProperty({ minLength: 3, maxLength: 500 })
   @Transform(({ value }: { value: unknown }) =>

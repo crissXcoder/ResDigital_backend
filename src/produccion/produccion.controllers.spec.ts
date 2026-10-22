@@ -51,6 +51,7 @@ describe('ProduccionLecheController (roles)', () => {
   it('las lecturas no exigen rol específico', () => {
     expect(puede('peon', controller.findAllByAnimal)).toBe(true);
     expect(puede('peon', controller.resumen)).toBe(true);
+    expect(puede('peon', controller.registros)).toBe(true);
   });
 });
 

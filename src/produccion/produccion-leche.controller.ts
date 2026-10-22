@@ -5,6 +5,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -24,6 +25,7 @@ import {
   ProduccionLecheResponseDto,
   ResumenProduccionDto,
   ResumenProduccionQueryDto,
+  UpdateProduccionLecheDto,
 } from './dto/produccion-leche.dto.js';
 
 @ApiTags('Producción de Leche')
@@ -75,6 +77,21 @@ export class ProduccionLecheController {
     );
   }
 
+  @Get('registros')
+  @ApiResponse({ status: 200, type: [ProduccionLecheResponseDto] })
+  registros(
+    @Query() query: ResumenProduccionQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.produccionService.listarRegistros(
+      user.tenantId,
+      manager,
+      query.desde,
+      query.hasta,
+    );
+  }
+
   @Get('animal/:animalId')
   @ApiResponse({ status: 200, type: [ProduccionLecheResponseDto] })
   findAllByAnimal(
@@ -83,6 +100,18 @@ export class ProduccionLecheController {
     @CurrentEntityManager() manager: EntityManager,
   ) {
     return this.produccionService.findAllByAnimal(user.tenantId, animalId, manager);
+  }
+
+  @Patch(':id')
+  @Roles('propietario', 'administrador', 'peon')
+  @ApiResponse({ status: 200, type: ProduccionLecheResponseDto })
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateProduccionLecheDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.produccionService.update(user.tenantId, id, dto, manager);
   }
 
   @Post(':id/anulacion')
