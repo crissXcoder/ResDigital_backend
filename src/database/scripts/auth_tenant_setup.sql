@@ -34,9 +34,9 @@ BEGIN
     split_part(NEW.email, '@', 1)
   );
 
-  -- Evaluar si es una invitación interna o un alta de finca nueva (self-signup)
-  IF NEW.invited_at IS NOT NULL THEN
-    -- Auth invited_at distingue las invitaciones de un signUp público.
+  -- La invitación persistida distingue el alta interna del auto-registro.
+  -- invited_at puede no estar establecido cuando Supabase inserta auth.users.
+  IF NEW.invited_at IS NOT NULL OR NEW.raw_user_meta_data ? 'invitacion_id' THEN
     v_invitacion_id := (NEW.raw_user_meta_data->>'invitacion_id')::UUID;
     SELECT tenant_id, rol::public.rol_usuario
       INTO v_tenant_id, v_rol
