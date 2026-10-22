@@ -323,7 +323,48 @@ describe('ProduccionLecheService', () => {
     });
   });
 
+  describe('update', () => {
+    it('actualiza los litros de un registro activo', async () => {
+      const evento = { id: 'p1', animalId: ANIMAL_ID, fechaEvento: hoy, revertido: false, notas: 'prev' } as Evento;
+      const detalle = { eventoId: 'p1', turno: 'MANANA', litros: 8, disposicion: 'COMERCIALIZABLE', tratamientoEventoId: null } as EventoProduccionLeche;
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Evento) return evento;
+        if (cls === EventoProduccionLeche) return detalle;
+        return null;
+      });
+      const actualizado = await service.update(TENANT, 'p1', { litros: 11.5, notas: 'corregido' }, manager);
+      expect(actualizado.litros).toBe(11.5);
+      expect(detalle.litros).toBe(11.5);
+      expect(evento.notas).toBe('corregido');
+      expect(save).toHaveBeenCalledWith(EventoProduccionLeche, detalle);
+    });
+
+    it('rechaza actualizar un registro revertido', async () => {
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Evento) return { id: 'p1', revertido: true, animalId: ANIMAL_ID } as Evento;
+        if (cls === EventoProduccionLeche) return { eventoId: 'p1' } as EventoProduccionLeche;
+        return null;
+      });
+      await expect(
+        service.update(TENANT, 'p1', { litros: 10 }, manager),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   describe('historial', () => {
+    it('lista el rango de la finca en una consulta sin registros revertidos', async () => {
+      const evento = { id: 'p1', animalId: ANIMAL_ID, fechaEvento: '2026-10-21',
+        revertido: false, usuarioId: USER, notas: null, fechaRegistro: new Date() } as Evento;
+      find.mockImplementation(async (cls: unknown) => cls === EventoProduccionLeche
+        ? [{ eventoId: 'p1', evento, turno: 'MANANA', litros: 8, disposicion: 'COMERCIALIZABLE', tratamientoEventoId: null }]
+        : []);
+      const registros = await service.listarRegistros(TENANT, manager, '2026-10-21', '2026-10-21');
+      expect(registros).toMatchObject([{ id: 'p1', animalId: ANIMAL_ID, litros: 8 }]);
+      expect(find).toHaveBeenCalledWith(EventoProduccionLeche, expect.objectContaining({
+        where: { evento: expect.objectContaining({ tenantId: TENANT, revertido: false, tipo: 'PRODUCCION_LECHE' }) },
+      }));
+    });
+
     it('incluye la liberación del tratamiento y los anulados marcados', async () => {
       const ev = (id: string, revertido: boolean) =>
         ({ id, animalId: ANIMAL_ID, fechaEvento: hoy, revertido, usuarioId: USER, notas: null, fechaRegistro: new Date() }) as Evento;
