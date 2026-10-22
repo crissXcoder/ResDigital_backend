@@ -10,9 +10,16 @@ import { Medicamento } from '../sanitary/entities/medicamento.entity.js';
 import { Padecimiento } from '../sanitary/entities/padecimiento.entity.js';
 import { EventoTratamiento } from './entities/evento-tratamiento.entity.js';
 import { TratamientosService } from './tratamientos.service.js';
+import {
+  crearAdminDataSource,
+  insertarTenants,
+  insertarUsuario,
+  limpiarTenants,
+} from '../test-utils/integration-tenant.js';
 
 describe('Integración RLS — MOD-02 Tratamientos como evento (base real)', () => {
   let dataSource: DataSource;
+  let adminSource: DataSource;
   const service = new TratamientosService();
 
   const tenantA = 'aaaaaaaa-aaaa-4aaa-aaaa-0000000000a2';
@@ -72,17 +79,24 @@ describe('Integración RLS — MOD-02 Tratamientos como evento (base real)', () 
       ],
     });
     await dataSource.initialize();
+    adminSource = crearAdminDataSource([
+      CatalogoRaza,
+      Animal,
+      Potrero,
+      Evento,
+      EventoTratamiento,
+      Medicamento,
+      Padecimiento,
+    ]);
+    await adminSource.initialize();
+    await insertarTenants(adminSource, { tenantA, tenantB });
+    await insertarUsuario(adminSource, tenantA, userTenantA);
+    await insertarUsuario(adminSource, tenantB, userTenantB);
 
-    await dataSource.query(`
-      INSERT INTO tenant (id, nombre_finca, created_at)
-      VALUES ('${tenantA}', 'TEST RLS SAN A', NOW()), ('${tenantB}', 'TEST RLS SAN B', NOW())
-      ON CONFLICT (id) DO NOTHING;
-    `);
-
-    const raza = await dataSource.getRepository(CatalogoRaza).findOne({ where: {} });
+    const raza = await adminSource.getRepository(CatalogoRaza).findOne({ where: {} });
     if (!raza) throw new Error('Se requiere al menos una raza en catalogo_raza.');
 
-    const animalRepo = dataSource.getRepository(Animal);
+    const animalRepo = adminSource.getRepository(Animal);
     const animalA = await animalRepo.save({
       tenantId: tenantA,
       areteInterno: ARETE_A,
@@ -115,16 +129,11 @@ describe('Integración RLS — MOD-02 Tratamientos como evento (base real)', () 
   });
 
   afterAll(async () => {
-    if (!dataSource?.isInitialized) return;
-    const animales = `SELECT id FROM animal WHERE arete_interno IN ('${ARETE_A}', '${ARETE_B}')`;
-    await dataSource.query(`
-      DELETE FROM evento_tratamiento WHERE evento_id IN (SELECT id FROM evento WHERE animal_id IN (${animales}));
-      UPDATE evento SET evento_corrige_id = NULL WHERE animal_id IN (${animales});
-      DELETE FROM evento WHERE animal_id IN (${animales});
-      DELETE FROM animal WHERE arete_interno IN ('${ARETE_A}', '${ARETE_B}');
-      DELETE FROM tenant WHERE id IN ('${tenantA}', '${tenantB}');
-    `);
-    await dataSource.destroy();
+    if (adminSource?.isInitialized) {
+      await limpiarTenants(adminSource, [tenantA, tenantB]);
+      await adminSource.destroy();
+    }
+    if (dataSource?.isInitialized) await dataSource.destroy();
   });
 
   it('evento_tratamiento tiene RLS forzado y política EXISTS heredada de evento', async () => {

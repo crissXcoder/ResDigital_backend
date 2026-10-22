@@ -13,7 +13,10 @@ import { CatalogoRaza } from '../../catalogos/entities/catalogo-raza.entity.js';
 import { Potrero } from '../../potreros/entities/potrero.entity.js';
 
 @Entity('animal')
-@Unique(['tenantId', 'areteInterno'])
+@Index('idx_animal_tenant_arete_activo_unique', ['tenantId', 'areteInterno'], {
+  unique: true,
+  where: 'activo IS TRUE',
+})
 @Index(['tenantId', 'numeroOficialDiio'], {
   unique: true,
   where: 'numero_oficial_diio IS NOT NULL',

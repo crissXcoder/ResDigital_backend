@@ -61,7 +61,14 @@
         },
         "responses": {
           "201": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteUserResponseDto"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -69,6 +76,40 @@
             "bearer": []
           }
         ],
+        "summary": "Invitar un usuario a la finca del propietario",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/invitaciones": {
+      "get": {
+        "operationId": "AuthController_listarInvitaciones",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationSummaryResponseDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Solo el propietario puede ver invitaciones"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar invitaciones de la finca del propietario",
         "tags": [
           "Auth"
         ]
@@ -237,6 +278,35 @@
         ]
       }
     },
+    "/animales/{id}/descendencia": {
+      "get": {
+        "operationId": "AnimalesController_findDescendencia",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar descendencia registrada del animal en la finca",
+        "tags": [
+          "Animales"
+        ]
+      }
+    },
     "/animales/{id}/baja": {
       "post": {
         "operationId": "AnimalesController_darDeBaja",
@@ -300,6 +370,41 @@
           }
         ],
         "summary": "Consultar el evento de baja histórico del animal",
+        "tags": [
+          "Animales"
+        ]
+      }
+    },
+    "/animales/{id}/reactivar": {
+      "post": {
+        "operationId": "AnimalesController_reactivar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Animal reactivado exitosamente en el hato"
+          },
+          "404": {
+            "description": "Animal no encontrado en esta finca"
+          },
+          "409": {
+            "description": "El animal ya está activo o su arete interno está en uso por otro animal activo"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reactivar un animal dado de baja si su arete interno está libre",
         "tags": [
           "Animales"
         ]
@@ -398,6 +503,77 @@
           }
         ],
         "summary": "Registrar metadatos de un documento ya cargado",
+        "tags": [
+          "Animales"
+        ]
+      }
+    },
+    "/animales/{id}/composicion-genetica": {
+      "get": {
+        "operationId": "AnimalesController_getComposicionGenetica",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposicionGeneticaResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Animal no encontrado en esta finca"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Calcular la composición genética ponderada del animal",
+        "tags": [
+          "Animales"
+        ]
+      }
+    },
+    "/animales/{id}/crias": {
+      "get": {
+        "operationId": "AnimalesController_getCrias",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de crías del animal"
+          },
+          "404": {
+            "description": "Animal no encontrado en esta finca"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Listar la descendencia directa registrada (crías) del animal",
         "tags": [
           "Animales"
         ]
@@ -1301,6 +1477,42 @@
         ]
       }
     },
+    "/produccion-leche/lote": {
+      "post": {
+        "operationId": "ProduccionLecheController_importarLote",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportarProduccionLecheLoteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportarLoteResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
     "/produccion-leche": {
       "post": {
         "operationId": "ProduccionLecheController_create",
@@ -1382,6 +1594,54 @@
         ]
       }
     },
+    "/produccion-leche/registros": {
+      "get": {
+        "operationId": "ProduccionLecheController_registros",
+        "parameters": [
+          {
+            "name": "desde",
+            "required": false,
+            "in": "query",
+            "description": "Inicio del rango (YYYY-MM-DD). Por defecto, 29 días antes de `hasta`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hasta",
+            "required": false,
+            "in": "query",
+            "description": "Fin del rango (YYYY-MM-DD). Por defecto, hoy en la zona horaria de la finca.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProduccionLecheResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
     "/produccion-leche/animal/{animalId}": {
       "get": {
         "operationId": "ProduccionLecheController_findAllByAnimal",
@@ -1405,6 +1665,51 @@
                   "items": {
                     "$ref": "#/components/schemas/ProduccionLecheResponseDto"
                   }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Producción de Leche"
+        ]
+      }
+    },
+    "/produccion-leche/{id}": {
+      "patch": {
+        "operationId": "ProduccionLecheController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProduccionLecheDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProduccionLecheResponseDto"
                 }
               }
             }
@@ -1700,11 +2005,126 @@
       },
       "InviteUserDto": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "correo": {
+            "type": "string",
+            "format": "email"
+          },
+          "rol": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "nombreCompleto": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "correo",
+          "rol"
+        ]
+      },
+      "InviteUserResponseDto": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rolAsignado": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "emailSent": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "success",
+          "invitacionId",
+          "rolAsignado",
+          "emailSent",
+          "expiresAt"
+        ]
+      },
+      "InvitationSummaryResponseDto": {
+        "type": "object",
+        "properties": {
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "correo": {
+            "type": "string",
+            "format": "email"
+          },
+          "rol": {
+            "type": "string",
+            "enum": [
+              "administrador",
+              "peon",
+              "veterinario"
+            ]
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PENDIENTE",
+              "ACEPTADA",
+              "CANCELADA",
+              "EXPIRADA"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "invitacionId",
+          "correo",
+          "rol",
+          "estado",
+          "createdAt",
+          "expiresAt"
+        ]
       },
       "ConfirmInvitationDto": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "nombreCompleto": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "invitacionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "nombreCompleto",
+          "invitacionId"
+        ]
       },
       "CreateAnimalDto": {
         "type": "object",
@@ -1781,6 +2201,102 @@
         "required": [
           "tipo",
           "objectPath"
+        ]
+      },
+      "ComposicionRazaItemDto": {
+        "type": "object",
+        "properties": {
+          "razaId": {
+            "type": "string",
+            "description": "Identificador ├║nico de la raza en el cat├ílogo",
+            "format": "uuid",
+            "example": "a0b9432d-cf48-4be7-a2f0-1a76c66cfcb1"
+          },
+          "nombre": {
+            "type": "string",
+            "description": "Nombre de la raza oficial",
+            "example": "Holstein"
+          },
+          "porcentaje": {
+            "type": "number",
+            "description": "Porcentaje gen├®tico de la raza (0 a 100)",
+            "example": 50
+          }
+        },
+        "required": [
+          "razaId",
+          "nombre",
+          "porcentaje"
+        ]
+      },
+      "ProgenitoresAnalizadosDto": {
+        "type": "object",
+        "properties": {
+          "madreId": {
+            "type": "string",
+            "description": "ID de la madre si est├í registrada en el hato",
+            "format": "uuid",
+            "nullable": true
+          },
+          "padreId": {
+            "type": "string",
+            "description": "ID del padre si es un toro registrado en el hato",
+            "format": "uuid",
+            "nullable": true
+          },
+          "padreExternoDescripcion": {
+            "type": "string",
+            "description": "Descripci├│n o pajilla del padre externo",
+            "nullable": true
+          }
+        }
+      },
+      "ComposicionGeneticaResponseDto": {
+        "type": "object",
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "description": "ID del animal evaluado",
+            "format": "uuid"
+          },
+          "areteInterno": {
+            "type": "string",
+            "description": "Arete interno del animal",
+            "example": "101"
+          },
+          "composicion": {
+            "description": "Desglose ponderado de la composici├│n gen├®tica por raza",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposicionRazaItemDto"
+            }
+          },
+          "metodo": {
+            "type": "string",
+            "description": "M├®todo zoot├®cnico utilizado para determinar la composici├│n",
+            "enum": [
+              "DIRECTO",
+              "PROMEDIO_PROGENITORES",
+              "PROGENITOR_UNICO",
+              "DESCONOCIDO"
+            ],
+            "example": "PROMEDIO_PROGENITORES"
+          },
+          "progenitoresAnalizados": {
+            "description": "Informaci├│n de los progenitores analizados",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProgenitoresAnalizadosDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "animalId",
+          "areteInterno",
+          "composicion",
+          "metodo",
+          "progenitoresAnalizados"
         ]
       },
       "CreatePesajeDto": {
@@ -1923,6 +2439,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "criaAreteInterno": {
+            "type": "string",
+            "nullable": true,
+            "description": "Arete interno de la cría vinculada, si se pudo resolver en esta finca."
+          },
           "facilidadParto": {
             "type": "string",
             "enum": [
@@ -1941,6 +2462,7 @@
         "required": [
           "eventoServicioId",
           "criaAnimalId",
+          "criaAreteInterno",
           "facilidadParto",
           "observaciones"
         ]
@@ -2254,6 +2776,92 @@
           "diagnostico"
         ]
       },
+      "DatosNuevaCriaPartoDto": {
+        "type": "object",
+        "properties": {
+          "areteInterno": {
+            "type": "string",
+            "description": "Identificador único interno o arete de la cría en la finca.",
+            "example": "CR-2026-001"
+          },
+          "nombre": {
+            "type": "string",
+            "description": "Nombre de la cría. Si se omite, se asigna el mismo valor de areteInterno.",
+            "example": "Lucero"
+          },
+          "sexo": {
+            "type": "string",
+            "description": "Sexo de la cría recién nacida ('Hembra' o 'Macho'). Por defecto: 'Hembra'.",
+            "enum": [
+              "Hembra",
+              "Macho"
+            ],
+            "example": "Hembra"
+          },
+          "razaId": {
+            "type": "string",
+            "description": "ID de la raza en catálogo. Si se omite, hereda automáticamente la raza de la madre.",
+            "example": "b1a2c3d4-0000-0000-0000-000000000001"
+          },
+          "razaOtra": {
+            "type": "string",
+            "description": "Descripción personalizada de la raza si aplica. Si se omite y la madre tiene razaOtra, la hereda.",
+            "example": "Cruce Jersey x Girolando"
+          },
+          "numeroOficialDiio": {
+            "type": "string",
+            "description": "Número oficial de arete DIIO del MAG/SENASA. Debe ser único en la finca si se especifica.",
+            "example": "DIIO-CR-998822"
+          },
+          "categoria": {
+            "type": "string",
+            "description": "Categoría de la cría. Si se omite, se auto-asigna 'Ternera' para hembras o 'Ternero' para machos.",
+            "enum": [
+              "Ternero",
+              "Ternera",
+              "Novillo",
+              "Novillo mayor",
+              "Novilla",
+              "Vaca",
+              "Toro"
+            ],
+            "example": "Ternera"
+          },
+          "potreroId": {
+            "type": "string",
+            "description": "ID del potrero donde se ubicará la cría. Si se omite, hereda el potrero de la madre.",
+            "example": "c2b3a4d5-1111-2222-3333-444455556666"
+          },
+          "fechaNacimiento": {
+            "type": "string",
+            "description": "Fecha de nacimiento de la cría (YYYY-MM-DD). Si se omite, se utiliza la fecha del parto.",
+            "example": "2026-10-21"
+          },
+          "pesoNacimientoKg": {
+            "type": "number",
+            "description": "Peso al nacer en kilogramos (peso de nacimiento).",
+            "example": 38.5
+          },
+          "fotoUrl": {
+            "type": "string",
+            "description": "URL de la fotografía inicial de la cría (opcional).",
+            "example": "https://storage.resdigital.cr/fotos/cria-001.jpg"
+          },
+          "padreId": {
+            "type": "string",
+            "description": "ID del toro padre si está registrado en la misma finca (opcional).",
+            "example": "a1b2c3d4-5555-6666-7777-888899990000"
+          },
+          "padreExternoDescripcion": {
+            "type": "string",
+            "description": "Descripción del toro padre si provino de inseminación artificial externa o monta externa.",
+            "example": "Toro Holstein Canadiense Semen Pajilla #4410"
+          }
+        },
+        "required": [
+          "areteInterno"
+        ]
+      },
       "RegistrarPartoDto": {
         "type": "object",
         "properties": {
@@ -2269,8 +2877,16 @@
           },
           "criaAnimalId": {
             "type": "string",
-            "description": "ID del animal registrado como cría recién nacida (si ya fue registrado en el hato)",
+            "description": "ID del animal registrado como cría recién nacida (si ya fue registrado en el hato). Mutuamente excluyente con nuevaCria.",
             "example": "e1d67412-21d9-482f-870d-f55da282b810"
+          },
+          "nuevaCria": {
+            "description": "Datos para dar de alta la cría en la misma transacción del parto. Mutuamente excluyente con criaAnimalId.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatosNuevaCriaPartoDto"
+              }
+            ]
           },
           "facilidadParto": {
             "type": "string",
@@ -2782,24 +3398,26 @@
           "urgente"
         ]
       },
-      "CreateProduccionLecheDto": {
+      "FilaImportarProduccionLecheDto": {
         "type": "object",
         "properties": {
-          "animalId": {
-            "type": "string",
-            "format": "uuid"
-          },
           "fecha": {
             "type": "string",
-            "description": "Fecha del ordeño (YYYY-MM-DD). No puede ser futura.",
-            "example": "2026-10-06"
+            "description": "Fecha del ordeño (YYYY-MM-DD)",
+            "example": "2026-10-21"
           },
           "turno": {
             "type": "string",
             "enum": [
               "MANANA",
               "TARDE"
-            ]
+            ],
+            "example": "MANANA"
+          },
+          "areteInterno": {
+            "type": "string",
+            "description": "Arete interno del animal activo",
+            "example": "101"
           },
           "litros": {
             "type": "number",
@@ -2813,10 +3431,25 @@
           }
         },
         "required": [
-          "animalId",
           "fecha",
           "turno",
+          "areteInterno",
           "litros"
+        ]
+      },
+      "ImportarProduccionLecheLoteDto": {
+        "type": "object",
+        "properties": {
+          "filas": {
+            "description": "Lista de registros a importar (máximo 200)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilaImportarProduccionLecheDto"
+            }
+          }
+        },
+        "required": [
+          "filas"
         ]
       },
       "ProduccionLecheResponseDto": {
@@ -2894,6 +3527,77 @@
           "fechaRegistro"
         ]
       },
+      "ImportarLoteResponseDto": {
+        "type": "object",
+        "properties": {
+          "totalImportados": {
+            "type": "number",
+            "example": 5
+          },
+          "litrosTotales": {
+            "type": "number",
+            "example": 62.5
+          },
+          "litrosComercializables": {
+            "type": "number",
+            "example": 50
+          },
+          "litrosDescarte": {
+            "type": "number",
+            "example": 12.5
+          },
+          "registros": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProduccionLecheResponseDto"
+            }
+          }
+        },
+        "required": [
+          "totalImportados",
+          "litrosTotales",
+          "litrosComercializables",
+          "litrosDescarte",
+          "registros"
+        ]
+      },
+      "CreateProduccionLecheDto": {
+        "type": "object",
+        "properties": {
+          "animalId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fecha": {
+            "type": "string",
+            "description": "Fecha del ordeño (YYYY-MM-DD). No puede ser futura.",
+            "example": "2026-10-06"
+          },
+          "turno": {
+            "type": "string",
+            "enum": [
+              "MANANA",
+              "TARDE"
+            ]
+          },
+          "litros": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 60,
+            "example": 12.5
+          },
+          "notas": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "animalId",
+          "fecha",
+          "turno",
+          "litros"
+        ]
+      },
       "ResumenProduccionDiaDto": {
         "type": "object",
         "properties": {
@@ -2960,6 +3664,24 @@
           "litrosDescarte",
           "registros",
           "porFecha"
+        ]
+      },
+      "UpdateProduccionLecheDto": {
+        "type": "object",
+        "properties": {
+          "litros": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 60,
+            "example": 14.5
+          },
+          "notas": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "litros"
         ]
       },
       "AnularProduccionDto": {

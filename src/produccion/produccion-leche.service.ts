@@ -4,7 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { In, LessThanOrEqual, MoreThan, type EntityManager } from 'typeorm';
+import { Between, In, LessThanOrEqual, MoreThan, type EntityManager } from 'typeorm';
+import { Animal } from '../animales/entities/animal.entity.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
 import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
@@ -20,9 +21,12 @@ import type {
   AnulacionProduccionResponseDto,
   AnularProduccionDto,
   CreateProduccionLecheDto,
+  ImportarProduccionLecheLoteDto,
+  ImportarLoteResponseDto,
   ProduccionLecheResponseDto,
   ResumenProduccionDiaDto,
   ResumenProduccionDto,
+  UpdateProduccionLecheDto,
 } from './dto/produccion-leche.dto.js';
 
 export const MAX_DIAS_RESUMEN = 366;
@@ -129,6 +133,12 @@ export class ProduccionLecheService {
       const animal = await buscarAnimal(trx, tenantId, dto.animalId);
       const fecha = dto.fecha.slice(0, 10);
 
+      if (animal.activo === false) {
+        throw new ConflictException(
+          `El animal con arete '${animal.areteInterno}' está dado de baja; no admite registros nuevos de producción.`,
+        );
+      }
+
       const hoy = todayIsoDate();
       if (fecha > hoy) {
         throw new BadRequestException(
@@ -215,6 +225,48 @@ export class ProduccionLecheService {
     });
   }
 
+  async update(
+    tenantId: string,
+    id: string,
+    dto: UpdateProduccionLecheDto,
+    manager: EntityManager,
+  ): Promise<ProduccionLecheResponseDto> {
+    return manager.transaction(async (trx) => {
+      const evento = await trx.findOne(Evento, {
+        where: { id, tenantId, tipo: 'PRODUCCION_LECHE' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const detalle = evento
+        ? await trx.findOne(EventoProduccionLeche, { where: { eventoId: id } })
+        : null;
+      if (!evento || !detalle) {
+        throw new NotFoundException(`Producción con ID '${id}' no encontrada.`);
+      }
+      if (evento.revertido) {
+        throw new BadRequestException(`No se puede modificar la producción '${id}' porque fue anulada.`);
+      }
+
+      await bloquearAnimalProduccion(trx, evento.animalId);
+
+      detalle.litros = dto.litros;
+      if (dto.notas !== undefined) {
+        evento.notas = dto.notas?.trim() || null;
+        await trx.save(Evento, evento);
+      }
+      await trx.save(EventoProduccionLeche, detalle);
+
+      let fechaLiberacion: string | null = null;
+      if (detalle.tratamientoEventoId) {
+        const tratamiento = await trx.findOne(EventoTratamiento, {
+          where: { eventoId: detalle.tratamientoEventoId },
+        });
+        fechaLiberacion = tratamiento?.fechaLiberacionLeche ?? null;
+      }
+
+      return toResponse(evento, detalle, fechaLiberacion);
+    });
+  }
+
   async anular(
     tenantId: string,
     usuarioId: string,
@@ -296,6 +348,46 @@ export class ProduccionLecheService {
     );
   }
 
+  async listarRegistros(
+    tenantId: string,
+    manager: EntityManager,
+    desde?: string,
+    hasta?: string,
+  ): Promise<ProduccionLecheResponseDto[]> {
+    const rango = resolverRango(desde, hasta, todayIsoDate());
+    if (rango.error) throw new BadRequestException(rango.error);
+
+    const detalles = await manager.find(EventoProduccionLeche, {
+      relations: { evento: true },
+      where: { evento: {
+        tenantId,
+        tipo: 'PRODUCCION_LECHE',
+        revertido: false,
+        fechaEvento: Between(rango.desde, rango.hasta),
+      } },
+      order: { evento: { fechaEvento: 'DESC', fechaRegistro: 'DESC' } },
+    });
+    const tratamientoIds = [...new Set(detalles
+      .map((d) => d.tratamientoEventoId)
+      .filter((id): id is string => id != null))];
+    const liberaciones = new Map<string, string>();
+    if (tratamientoIds.length > 0) {
+      const tratamientos = await manager.find(EventoTratamiento, {
+        where: { eventoId: In(tratamientoIds) },
+      });
+      for (const tratamiento of tratamientos) {
+        liberaciones.set(tratamiento.eventoId, tratamiento.fechaLiberacionLeche);
+      }
+    }
+    return detalles.map((detalle) => toResponse(
+      detalle.evento,
+      detalle,
+      detalle.tratamientoEventoId
+        ? (liberaciones.get(detalle.tratamientoEventoId) ?? null)
+        : null,
+    ));
+  }
+
   async resumen(
     tenantId: string,
     manager: EntityManager,
@@ -326,4 +418,157 @@ export class ProduccionLecheService {
 
     return sumarResumen(rango.desde, rango.hasta, filas);
   }
+
+  async importarLote(
+    tenantId: string,
+    usuarioId: string,
+    dto: ImportarProduccionLecheLoteDto,
+    manager: EntityManager,
+  ): Promise<ImportarLoteResponseDto> {
+    const hoy = todayIsoDate();
+
+    // 1. Detección de duplicados dentro del lote (mismo animal, fecha y turno)
+    const vistos = new Set<string>();
+    for (let i = 0; i < dto.filas.length; i++) {
+      const f = dto.filas[i];
+      const arete = (f.areteInterno || '').replace(/^#/, '').trim();
+      const clave = `${arete}|${f.fecha}|${f.turno}`.toLowerCase();
+      if (vistos.has(clave)) {
+        throw new ConflictException(
+          `Fila ${i + 1}: Ya existe un registro duplicado en el mismo lote para el arete '${arete}', turno ${f.turno} y fecha ${f.fecha}.`,
+        );
+      }
+      vistos.add(clave);
+    }
+
+    return manager.transaction(async (trx) => {
+      const registros: ProduccionLecheResponseDto[] = [];
+      let litrosTotales = 0;
+      let litrosComercializables = 0;
+      let litrosDescarte = 0;
+
+      for (let i = 0; i < dto.filas.length; i++) {
+        const fila = dto.filas[i];
+        const fecha = fila.fecha.slice(0, 10);
+        const arete = (fila.areteInterno || '').replace(/^#/, '').trim();
+
+        if (fecha > hoy) {
+          throw new BadRequestException(
+            `Fila ${i + 1}: La fecha de producción (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+          );
+        }
+
+        // Búsqueda del animal activo del tenant (OBS-007)
+        const animal = await trx.findOne(Animal, {
+          where: { tenantId, areteInterno: arete, activo: true },
+        });
+        if (!animal) {
+          throw new NotFoundException(
+            `Fila ${i + 1}: No se encontró un animal activo con el arete '${arete}' en esta finca.`,
+          );
+        }
+
+        await bloquearAnimalProduccion(trx, animal.id);
+
+        if (!esHembra(animal)) {
+          throw new BadRequestException(
+            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' es macho; solo una hembra en lactancia registra producción de leche.`,
+          );
+        }
+
+        const lactancia = await this.lactancia.estadoDe(animal, tenantId, trx, fecha);
+        if (!lactancia.enLactancia) {
+          throw new BadRequestException(
+            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Si ya se ordeña, registre primero el inicio de lactancia.`,
+          );
+        }
+
+        const duplicadoBd = await trx.findOne(EventoProduccionLeche, {
+          relations: { evento: true },
+          where: {
+            turno: fila.turno,
+            evento: {
+              tenantId,
+              animalId: animal.id,
+              tipo: 'PRODUCCION_LECHE',
+              fechaEvento: fecha,
+              revertido: false,
+            },
+          },
+        });
+        if (duplicadoBd) {
+          throw new ConflictException(
+            `Fila ${i + 1}: Ya hay producción registrada para el animal con arete '${animal.areteInterno}', turno ${fila.turno} del ${fecha}.`,
+          );
+        }
+
+        const tratamientos = await trx.find(EventoTratamiento, {
+          relations: { evento: true },
+          where: {
+            fechaLiberacionLeche: MoreThan(fecha),
+            evento: {
+              tenantId,
+              animalId: animal.id,
+              tipo: 'TRATAMIENTO',
+              revertido: false,
+              fechaEvento: LessThanOrEqual(fecha),
+            },
+          },
+        });
+
+        const disposicion = resolverDisposicion(
+          tratamientos.map((t) => ({
+            eventoId: t.eventoId,
+            fechaAplicacion: t.evento.fechaEvento,
+            fechaLiberacionLeche: t.fechaLiberacionLeche,
+          })),
+          fecha,
+        );
+
+        const evento = await trx.save(
+          Evento,
+          trx.create(Evento, {
+            tenantId,
+            animalId: animal.id,
+            tipo: 'PRODUCCION_LECHE',
+            fechaEvento: fecha,
+            usuarioId,
+            revertido: false,
+            eventoCorrigeId: null,
+            notas: fila.notas?.trim() || null,
+          }),
+        );
+
+        const detalle = await trx.save(
+          EventoProduccionLeche,
+          trx.create(EventoProduccionLeche, {
+            eventoId: evento.id,
+            turno: fila.turno,
+            litros: fila.litros,
+            disposicion: disposicion.disposicion,
+            tratamientoEventoId: disposicion.tratamientoEventoId,
+          }),
+        );
+
+        const regDto = toResponse(evento, detalle, disposicion.fechaLiberacionLeche);
+        registros.push(regDto);
+
+        litrosTotales += fila.litros;
+        if (disposicion.disposicion === 'COMERCIALIZABLE') {
+          litrosComercializables += fila.litros;
+        } else {
+          litrosDescarte += fila.litros;
+        }
+      }
+
+      return {
+        totalImportados: registros.length,
+        litrosTotales: redondear(litrosTotales),
+        litrosComercializables: redondear(litrosComercializables),
+        litrosDescarte: redondear(litrosDescarte),
+        registros,
+      };
+    });
+  }
+
 }

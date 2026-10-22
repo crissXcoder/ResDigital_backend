@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsDateString,
   IsIn,
   IsNumber,
@@ -12,6 +15,7 @@ import {
   Matches,
   Max,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
 import { FECHA_CIVIL_REGEX } from '../../tratamientos/dto/create-tratamiento.dto.js';
 import {
@@ -22,6 +26,7 @@ import {
 } from '../entities/evento-produccion-leche.entity.js';
 
 export const MAX_LITROS_TURNO = 60;
+export const MAX_REGISTROS_LOTE = 200;
 
 export class CreateProduccionLecheDto {
   @ApiProperty({ format: 'uuid' })
@@ -38,6 +43,20 @@ export class CreateProduccionLecheDto {
   turno: TurnoOrdeno;
 
   @ApiProperty({ minimum: 0.1, maximum: MAX_LITROS_TURNO, example: 12.5 })
+  @IsNumber({ maxDecimalPlaces: 1 }, { message: 'litros debe ser un número con a lo sumo un decimal' })
+  @IsPositive({ message: 'litros debe ser mayor que 0' })
+  @Max(MAX_LITROS_TURNO, { message: `litros no puede superar ${MAX_LITROS_TURNO} por turno` })
+  litros: number;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  @IsOptional()
+  notas?: string;
+}
+
+export class UpdateProduccionLecheDto {
+  @ApiProperty({ minimum: 0.1, maximum: MAX_LITROS_TURNO, example: 14.5 })
   @IsNumber({ maxDecimalPlaces: 1 }, { message: 'litros debe ser un número con a lo sumo un decimal' })
   @IsPositive({ message: 'litros debe ser mayor que 0' })
   @Max(MAX_LITROS_TURNO, { message: `litros no puede superar ${MAX_LITROS_TURNO} por turno` })
@@ -161,4 +180,74 @@ export class ResumenProduccionDto {
 
   @ApiProperty({ type: [ResumenProduccionDiaDto] })
   porFecha: ResumenProduccionDiaDto[];
+}
+
+export class FilaImportarProduccionLecheDto {
+  @ApiProperty({ description: 'Fecha del ordeño (YYYY-MM-DD)', example: '2026-10-21' })
+  @Matches(FECHA_CIVIL_REGEX, { message: 'fecha debe tener formato YYYY-MM-DD' })
+  @IsDateString()
+  fecha: string;
+
+  @ApiProperty({ enum: TURNOS_ORDENO, example: 'MANANA' })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      const v = value.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (v === 'MANANA') return 'MANANA';
+      if (v === 'TARDE') return 'TARDE';
+    }
+    return value;
+  })
+  @IsIn([...TURNOS_ORDENO])
+  turno: TurnoOrdeno;
+
+  @ApiProperty({ description: 'Arete interno del animal activo', example: '101' })
+  @IsString()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.replace(/^#/, '').trim() : value,
+  )
+  areteInterno: string;
+
+  @ApiProperty({ minimum: 0.1, maximum: MAX_LITROS_TURNO, example: 12.5 })
+  @IsNumber({ maxDecimalPlaces: 1 }, { message: 'litros debe ser un número con a lo sumo un decimal' })
+  @IsPositive({ message: 'litros debe ser mayor que 0' })
+  @Max(MAX_LITROS_TURNO, { message: `litros no puede superar ${MAX_LITROS_TURNO} por turno` })
+  litros: number;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  @IsOptional()
+  notas?: string;
+}
+
+export class ImportarProduccionLecheLoteDto {
+  @ApiProperty({
+    type: [FilaImportarProduccionLecheDto],
+    description: `Lista de registros a importar (máximo ${MAX_REGISTROS_LOTE})`,
+  })
+  @IsArray()
+  @ArrayMinSize(1, { message: 'El lote debe contener al menos un registro' })
+  @ArrayMaxSize(MAX_REGISTROS_LOTE, {
+    message: `El lote no puede superar ${MAX_REGISTROS_LOTE} registros`,
+  })
+  @ValidateNested({ each: true })
+  @Type(() => FilaImportarProduccionLecheDto)
+  filas: FilaImportarProduccionLecheDto[];
+}
+
+export class ImportarLoteResponseDto {
+  @ApiProperty({ example: 5 })
+  totalImportados: number;
+
+  @ApiProperty({ example: 62.5 })
+  litrosTotales: number;
+
+  @ApiProperty({ example: 50.0 })
+  litrosComercializables: number;
+
+  @ApiProperty({ example: 12.5 })
+  litrosDescarte: number;
+
+  @ApiProperty({ type: [ProduccionLecheResponseDto] })
+  registros: ProduccionLecheResponseDto[];
 }

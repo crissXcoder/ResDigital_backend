@@ -20,6 +20,7 @@ import { BajaAnimalDto } from './dto/baja-animal.dto.js';
 import { CreateDocumentoDto } from './dto/create-documento.dto.js';
 import { QueryAnimalDto } from './dto/query-animal.dto.js';
 import { DocumentoAnimalResponseDto } from './dto/documento-animal-response.dto.js';
+import { ComposicionGeneticaResponseDto } from './dto/composicion-genetica.dto.js';
 
 /**
  * Nota: los handlers reciben `@CurrentUser() user: AuthenticatedUser` en vez de
@@ -49,6 +50,16 @@ export class AnimalesController {
     @CurrentEntityManager() manager: EntityManager,
   ) {
     return this.animalesService.findOne(id, user.tenantId, manager);
+  }
+
+  @Get(':id/descendencia')
+  @ApiOperation({ summary: 'Consultar descendencia registrada del animal en la finca' })
+  findDescendencia(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.findDescendencia(id, user.tenantId, manager);
   }
 
   @Post()
@@ -107,6 +118,20 @@ export class AnimalesController {
     return this.animalesService.getBajaByAnimal(id, user.tenantId, manager);
   }
 
+  @Post(':id/reactivar')
+  @Roles('propietario', 'administrador')
+  @ApiOperation({ summary: 'Reactivar un animal dado de baja si su arete interno está libre' })
+  @ApiResponse({ status: 200, description: 'Animal reactivado exitosamente en el hato' })
+  @ApiResponse({ status: 404, description: 'Animal no encontrado en esta finca' })
+  @ApiResponse({ status: 409, description: 'El animal ya está activo o su arete interno está en uso por otro animal activo' })
+  reactivar(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.reactivar(id, user.tenantId, manager);
+  }
+
   @Get(':id/documentos')
   @ApiOperation({ summary: 'Listar los documentos privados de un animal' })
   @ApiResponse({ status: 200, type: [DocumentoAnimalResponseDto] })
@@ -139,5 +164,45 @@ export class AnimalesController {
       docDto,
       manager,
     );
+  }
+
+  @Get(':id/composicion-genetica')
+  @Roles('propietario', 'administrador', 'veterinario', 'peon')
+  @ApiOperation({
+    summary: 'Calcular la composición genética ponderada del animal',
+  })
+  @ApiResponse({ status: 200, type: ComposicionGeneticaResponseDto })
+  @ApiResponse({
+    status: 404,
+    description: 'Animal no encontrado en esta finca',
+  })
+  getComposicionGenetica(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.calcularComposicionGenetica(
+      id,
+      user.tenantId,
+      manager,
+    );
+  }
+
+  @Get(':id/crias')
+  @Roles('propietario', 'administrador', 'veterinario', 'peon')
+  @ApiOperation({
+    summary: 'Listar la descendencia directa registrada (crías) del animal',
+  })
+  @ApiResponse({ status: 200, description: 'Lista de crías del animal' })
+  @ApiResponse({
+    status: 404,
+    description: 'Animal no encontrado en esta finca',
+  })
+  getCrias(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentEntityManager() manager: EntityManager,
+  ) {
+    return this.animalesService.obtenerCrias(id, user.tenantId, manager);
   }
 }

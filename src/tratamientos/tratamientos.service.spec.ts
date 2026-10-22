@@ -319,6 +319,20 @@ describe('TratamientosService', () => {
   });
 
   describe('create', () => {
+    it('rechaza tratamientos nuevos para un animal dado de baja y conserva sus consultas históricas', async () => {
+      findOne.mockResolvedValueOnce({ ...animal, activo: false });
+
+      await expect(
+        service.create(
+          TENANT_ID,
+          USER_ID,
+          { animalId: ANIMAL_ID, ...datos },
+          manager,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(save).not.toHaveBeenCalled();
+    });
+
     it('crea evento TRATAMIENTO con usuario y detalle con liberaciones duales', async () => {
       findOne.mockResolvedValueOnce(animal);
 
