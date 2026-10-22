@@ -174,7 +174,15 @@ export class FilaImportarProduccionLecheDto {
   @IsDateString()
   fecha: string;
 
-  @ApiProperty({ enum: TURNOS_ORDENO, example: 'Mañana' })
+  @ApiProperty({ enum: TURNOS_ORDENO, example: 'MANANA' })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      const v = value.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (v === 'MANANA') return 'MANANA';
+      if (v === 'TARDE') return 'TARDE';
+    }
+    return value;
+  })
   @IsIn([...TURNOS_ORDENO])
   turno: TurnoOrdeno;
 
