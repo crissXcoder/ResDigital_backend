@@ -19,8 +19,13 @@ import { InviteUserDto } from './dto/invite-user.dto.js';
 import { ConfirmInvitationDto } from './dto/confirm-invitation.dto.js';
 import { UserProfileResponseDto } from './dto/user-profile-response.dto.js';
 import {
+  InvitationSummaryResponseDto,
+  InviteUserResponseDto,
+} from './dto/invitation-response.dto.js';
+import {
   InvitationsService,
   type InviteUserResult,
+  type InvitationSummary,
 } from './services/invitations.service.js';
 
 interface UsuarioRow {
@@ -99,6 +104,8 @@ export class AuthController {
    */
   @Post('invitar')
   @Roles('propietario')
+  @ApiOperation({ summary: 'Invitar un usuario a la finca del propietario' })
+  @ApiResponse({ status: 201, type: InviteUserResponseDto })
   async invitarUsuario(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: InviteUserDto,
@@ -110,6 +117,23 @@ export class AuthController {
       );
     }
     return this.invitationsService.inviteUser(user, dto, req.entityManager);
+  }
+
+  @Get('invitaciones')
+  @Roles('propietario')
+  @ApiOperation({ summary: 'Consultar invitaciones de la finca del propietario' })
+  @ApiResponse({ status: 200, type: [InvitationSummaryResponseDto] })
+  @ApiResponse({ status: 403, description: 'Solo el propietario puede ver invitaciones' })
+  async listarInvitaciones(
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() req: RequestWithRls,
+  ): Promise<InvitationSummary[]> {
+    if (!req.entityManager) {
+      throw new InternalServerErrorException(
+        'No se pudieron consultar las invitaciones. Volvé a intentar.',
+      );
+    }
+    return this.invitationsService.listInvitations(user.tenantId, req.entityManager);
   }
 
   /**
@@ -128,12 +152,16 @@ export class AuthController {
         'No se pudo iniciar la transacción de la invitación.',
       );
     }
-    return this.invitationsService.confirmInvitation(
+    const invitation = await this.invitationsService.confirmInvitation(
       user.userId,
       user.tenantId,
       user.email,
-      dto as unknown as Record<string, unknown>,
+      {
+        nombreCompleto: dto.nombreCompleto,
+        invitacionId: dto.invitacionId,
+      },
       req.entityManager,
     );
+    return invitation;
   }
 }

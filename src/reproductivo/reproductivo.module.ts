@@ -12,6 +12,7 @@ import { ReproductiveStateService } from './services/reproductive-state.service.
 import { ReproductiveService } from './services/reproductive.service.js';
 import { ReproductiveController } from './reproductive.controller.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { AnimalesModule } from '../animales/animales.module.js';
 
 @Module({
   imports: [

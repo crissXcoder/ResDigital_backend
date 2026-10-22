@@ -106,6 +106,30 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
     );
   });
 
+  it('permite filtrar por sexo, potreroId y razaId (OBS-005)', async () => {
+    const POTRERO_ID = '44444444-4444-4444-8444-444444444444';
+    const RAZA_ID = '55555555-5555-4555-8555-555555555555';
+
+    await service.findAll(
+      TENANT_A,
+      { sexo: 'Hembra', potreroId: POTRERO_ID, razaId: RAZA_ID },
+      mockEntityManager,
+    );
+
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.sexo = :sexo',
+      { sexo: 'Hembra' },
+    );
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.potrero_id = :potreroId',
+      { potreroId: POTRERO_ID },
+    );
+    expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'animal.raza_id = :razaId',
+      { razaId: RAZA_ID },
+    );
+  });
+
   describe('createDocumento', () => {
     const ANIMAL_ID = '22222222-2222-4222-8222-222222222222';
     const DOCUMENT_ID = '33333333-3333-4333-8333-333333333333';
@@ -237,6 +261,52 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
   });
 });
 
+describe('AnimalesService - descendencia del expediente (RF-005)', () => {
+  const TENANT_A = '11111111-1111-4111-8111-111111111111';
+  const ANIMAL_ID = '22222222-2222-4222-8222-222222222222';
+  const manager = {
+    findOne: vi.fn(),
+    find: vi.fn(),
+  } as unknown as EntityManager;
+  const service = new AnimalesService({
+    validateObject: vi.fn(),
+    removeObject: vi.fn(),
+  } as unknown as AnimalDocumentStorageService);
+
+  beforeEach(() => {
+    vi.mocked(manager.findOne).mockReset();
+    vi.mocked(manager.find).mockReset();
+  });
+
+  it('devuelve descendencia por madre o padre limitada a la finca y ordenada por arete', async () => {
+    vi.mocked(manager.findOne).mockResolvedValue({ id: ANIMAL_ID } as Animal);
+    vi.mocked(manager.find).mockResolvedValue([]);
+
+    await service.findDescendencia(ANIMAL_ID, TENANT_A, manager);
+
+    expect(manager.findOne).toHaveBeenCalledWith(Animal, {
+      where: { id: ANIMAL_ID, tenantId: TENANT_A },
+      select: { id: true },
+    });
+    expect(manager.find).toHaveBeenCalledWith(Animal, expect.objectContaining({
+      where: [
+        { tenantId: TENANT_A, madreId: ANIMAL_ID },
+        { tenantId: TENANT_A, padreId: ANIMAL_ID },
+      ],
+      order: { areteInterno: 'ASC' },
+    }));
+  });
+
+  it('no revela descendencia cuando el animal no pertenece a la finca', async () => {
+    vi.mocked(manager.findOne).mockResolvedValue(null);
+
+    await expect(
+      service.findDescendencia(ANIMAL_ID, TENANT_A, manager),
+    ).rejects.toThrowError(NotFoundException);
+    expect(manager.find).not.toHaveBeenCalled();
+  });
+});
+
 describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
   let service: AnimalesService;
   let mockEntityManager: EntityManager;
@@ -343,8 +413,33 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
     await expect(
       service.create(TENANT_A, dto, mockEntityManager),
     ).rejects.toThrowError(
-      'Ya existe un animal con el arete interno "A001" en esta finca.',
+      'Ya existe un animal activo con el arete interno "A001" en esta finca.',
     );
+  });
+
+  it('permite registrar un nuevo animal con un arete interno reutilizado si el animal previo está inactivo (baja)', async () => {
+    vi.mocked(mockEntityManager.findOne).mockImplementation(async (_entity: any, options: any) => {
+      if (options?.where?.areteInterno === 'A001' && options?.where?.activo === true) {
+        return null;
+      }
+      return null;
+    });
+
+    const dto: any = {
+      nombre: 'Vaca Nueva Reutiliza Arete',
+      areteInterno: 'A001',
+      sexo: 'Hembra',
+      razaId: 'raza-uuid',
+      categoria: 'Vaca',
+    };
+
+    const creado = { id: 'nuevo-animal-uuid', areteInterno: 'A001', activo: true } as Animal;
+    vi.mocked(mockEntityManager.create).mockReturnValue(creado as any);
+    vi.mocked(mockEntityManager.save).mockResolvedValue(creado as any);
+
+    const resultado = await service.create(TENANT_A, dto, mockEntityManager);
+    expect(resultado).toBeDefined();
+    expect(mockEntityManager.save).toHaveBeenCalled();
   });
 
   it('en update: permite conservar el mismo DIIO del propio animal sin dar colisión', async () => {
@@ -1147,6 +1242,70 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
     await expect(
       service.getBajaByAnimal('animal-activo', TENANT_A, mockEntityManager),
     ).rejects.toThrowError(NotFoundException);
+  });
+
+  it('reactivar: reactiva con éxito un animal inactivo si su arete interno está libre', async () => {
+    const animalInactivo = {
+      id: 'animal-inactivo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: false,
+      fechaBaja: '2026-03-01',
+      tipoBaja: 'Venta',
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne)
+      .mockResolvedValueOnce(animalInactivo)
+      .mockResolvedValueOnce(null);
+
+    vi.mocked(mockEntityManager.save).mockImplementation(async (a: any) => a);
+
+    const res = await service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager);
+    expect(res.activo).toBe(true);
+    expect(res.fechaBaja).toBeNull();
+    expect(res.tipoBaja).toBeNull();
+    expect(mockEntityManager.save).toHaveBeenCalled();
+  });
+
+  it('reactivar: rechaza con ConflictException si el animal ya se encuentra activo', async () => {
+    const animalActivo = {
+      id: 'animal-activo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalActivo);
+
+    await expect(
+      service.reactivar('animal-activo-uuid', TENANT_A, mockEntityManager),
+    ).rejects.toThrowError('El animal ya se encuentra activo en el hato.');
+  });
+
+  it('reactivar: rechaza con ConflictException (409) si su arete interno fue reutilizado por otro animal activo', async () => {
+    const animalInactivo = {
+      id: 'animal-inactivo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      activo: false,
+      fechaBaja: '2026-03-01',
+    } as Animal;
+
+    const otroActivo = {
+      id: 'otro-animal-activo-uuid',
+      tenantId: TENANT_A,
+      areteInterno: '1002',
+      nombre: 'Novillo B',
+      activo: true,
+    } as Animal;
+
+    vi.mocked(mockEntityManager.findOne)
+      .mockResolvedValueOnce(animalInactivo)
+      .mockResolvedValueOnce(otroActivo);
+
+    await expect(
+      service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager),
+    ).rejects.toThrowError(/el arete interno "1002" está actualmente en uso por otro animal activo/);
   });
 });
 

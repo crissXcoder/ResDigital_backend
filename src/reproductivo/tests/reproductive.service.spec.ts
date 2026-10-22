@@ -546,6 +546,40 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       );
     });
 
+    it('rechaza registrar cría cuando el desenlace es Aborto (OBS-003)', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
+        mockVacaA as Animal,
+      );
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-09-07',
+            facilidadParto: 'Aborto' as const,
+            nuevaCria: { areteInterno: 'CR-001' },
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError('Un parto con desenlace de Aborto no puede registrar cría viable.');
+
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-09-07',
+            facilidadParto: 'Aborto' as const,
+            criaAnimalId: 'cria-uuid-1',
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrowError('Un parto con desenlace de Aborto no puede registrar cría viable.');
+    });
+
     it('rechaza ambas modalidades a la vez y no guarda el parto', async () => {
       vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
         mockVacaA as Animal,

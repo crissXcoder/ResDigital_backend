@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsBooleanString } from 'class-validator';
+import { IsOptional, IsString, IsBooleanString, IsUUID } from 'class-validator';
 
 export class QueryAnimalDto {
   @IsOptional()
@@ -16,4 +16,16 @@ export class QueryAnimalDto {
   @IsOptional()
   @IsString()
   buscar?: string;
+
+  @IsOptional()
+  @IsString()
+  sexo?: string;
+
+  @IsOptional()
+  @IsUUID()
+  potreroId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  razaId?: string;
 }

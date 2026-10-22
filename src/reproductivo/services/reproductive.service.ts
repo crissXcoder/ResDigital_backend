@@ -333,6 +333,12 @@ export class ReproductiveService {
       }
     }
 
+    if (dto.facilidadParto === 'Aborto' && (dto.criaAnimalId || dto.nuevaCria)) {
+      throw new BadRequestException(
+        'Un parto con desenlace de Aborto no puede registrar cría viable.',
+      );
+    }
+
     if (dto.criaAnimalId && dto.nuevaCria) {
       throw new BadRequestException(
         'El contrato de cría no permite especificar "criaAnimalId" y "nuevaCria" simultáneamente.',
@@ -409,6 +415,22 @@ export class ReproductiveService {
           notas: dto.observaciones ?? null,
         }),
       );
+
+      // RF-004: Alta o vinculación de cría dentro de la misma transacción atómica
+      let criaAnimalId: string | null = null;
+      if (dto.criaAnimalId || dto.nuevaCria) {
+        const cria = await this.animalesService.crearOValidarCriaParaParto(
+          tenantId,
+          animalId,
+          {
+            criaAnimalId: dto.criaAnimalId,
+            nuevaCria: dto.nuevaCria,
+          },
+          dto.fechaEvento,
+          trx,
+        );
+        criaAnimalId = cria ? cria.id : null;
+      }
 
       const parto = await trx.save(
         EventoParto,

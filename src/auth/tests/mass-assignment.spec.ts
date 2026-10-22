@@ -15,6 +15,7 @@ interface TestInvitation {
   rol: AuthenticatedUser['rol'];
   invitadoPor: string;
   estado: 'PENDIENTE' | 'ACEPTADA' | 'CANCELADA';
+  createdAt: string;
 }
 
 interface TestAuditRow {
@@ -35,6 +36,7 @@ function makeManager() {
   const userTenants = new Map<string, string>([
     ['danny-user-uuid-999', tenantId],
   ]);
+  const userEmails = new Set<string>();
   const queryRunner: { isTransactionActive: boolean; data: Record<string, unknown> } = {
     isTransactionActive: true,
     data: {},
@@ -43,6 +45,21 @@ function makeManager() {
     async (sql: string, parameters: unknown[] = []): Promise<unknown[]> => {
       const statement = sql.replace(/\s+/g, ' ').trim();
       if (statement.startsWith('SELECT pg_advisory_xact_lock')) return [];
+
+      if (statement.startsWith('SELECT tenant_id FROM public.invitacion')) {
+        return invitationRows.some(
+          (row) => row.correo === parameters[0] && row.tenantId !== parameters[1] && row.estado === 'PENDIENTE',
+        ) ? [{ tenant_id: 'otra-finca' }] : [];
+      }
+      if (statement.startsWith('SELECT id, correo, rol, estado, created_at, now()')) {
+        return invitationRows.filter((row) => row.tenantId === parameters[0]).map((row) => ({
+          id: row.id, correo: row.correo, rol: row.rol, estado: row.estado,
+          created_at: row.createdAt, ahora: new Date().toISOString(),
+        }));
+      }
+      if (statement.startsWith('SELECT id FROM public.usuario WHERE lower(correo)')) {
+        return userEmails.has(String(parameters[0])) ? [{ id: 'existing-user' }] : [];
+      }
 
       if (statement.includes('SELECT curr_hash, created_at')) {
         const rows = auditRows
@@ -80,7 +97,8 @@ function makeManager() {
           existing.rol = parameters[3] as AuthenticatedUser['rol'];
           existing.invitadoPor = String(parameters[4]);
           existing.estado = 'PENDIENTE';
-          return [{ id: existing.id }];
+          existing.createdAt = new Date().toISOString();
+          return [{ id: existing.id, created_at: existing.createdAt }];
         }
         const invitation: TestInvitation = {
           id: String(parameters[0]),
@@ -89,20 +107,21 @@ function makeManager() {
           rol: parameters[3] as AuthenticatedUser['rol'],
           invitadoPor: String(parameters[4]),
           estado: 'PENDIENTE',
+          createdAt: new Date().toISOString(),
         };
         invitationRows.push(invitation);
-        return [{ id: invitation.id }];
+        return [{ id: invitation.id, created_at: invitation.createdAt }];
       }
 
-      if (statement.startsWith('SELECT id, rol FROM public.invitacion')) {
+      if (statement.startsWith('SELECT id, rol, created_at FROM public.invitacion')) {
         const invitation = invitationRows.find(
           (row) =>
-            row.correo === parameters[0] &&
-            row.tenantId === parameters[1] &&
-            row.estado === 'PENDIENTE',
+            row.id === parameters[0] && row.correo === parameters[1] &&
+            row.tenantId === parameters[2] && row.estado === 'PENDIENTE' &&
+            Date.parse(row.createdAt) > Date.now() - 24 * 60 * 60 * 1000,
         );
         return invitation
-          ? [{ id: invitation.id, rol: invitation.rol }]
+          ? [{ id: invitation.id, rol: invitation.rol, created_at: invitation.createdAt }]
           : [];
       }
 
@@ -129,7 +148,7 @@ function makeManager() {
     },
   );
   const manager = { query, queryRunner } as unknown as EntityManager;
-  return { manager, query, queryRunner, invitationRows, auditRows, userTenants };
+  return { manager, query, queryRunner, invitationRows, auditRows, userTenants, userEmails };
 }
 
 describe('Invitaciones y auditoría sin fallback de memoria', () => {
@@ -160,6 +179,7 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
     const configService = new ConfigService({
       SUPABASE_URL: 'https://test.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'test-service-key',
+      FRONTEND_URL: 'https://frontend.local',
     });
     invitationsService = new InvitationsService(
       rolesService,
@@ -182,6 +202,7 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
     );
 
     expect(response).toMatchObject({ success: true, rolAsignado: 'peon', emailSent: null });
+    expect(Date.parse(response.expiresAt)).toBeGreaterThan(Date.now());
     expect(db.invitationRows[0]?.correo).toBe('danny@finca.cr');
     expect(db.auditRows.map((row) => row.tipoEvento)).toEqual(['INVITACION_ENVIADA']);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -191,6 +212,10 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(response.emailSent).toBe(true);
+    const [url, options] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.searchParams.get('redirect_to')).toBe('https://frontend.local/aceptar-invitacion');
+    expect(JSON.parse(String(options.body))).toMatchObject({ data: { invitacion_id: db.invitationRows[0]?.id } });
+    expect(JSON.parse(String(options.body))).not.toHaveProperty('app_metadata');
   });
 
   it('reports failed Auth delivery without claiming the email was sent', async () => {
@@ -267,11 +292,58 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
         'danny-user-uuid-999',
         owner.tenantId,
         'danny@finca.cr',
-        {},
+        { invitacionId: '11111111-1111-4111-8111-111111111111', nombreCompleto: 'Invitado' },
         db.manager,
       ),
-    ).rejects.toThrow(/invitación pendiente/i);
+    ).rejects.toThrow(/invitación no está vigente/i);
     expect(db.query).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an expired invitation before changing the user role', async () => {
+    const inviteResult = await invitationsService.inviteUser(
+      owner,
+      { correo: 'danny@finca.cr', rol: 'peon' },
+      db.manager,
+    );
+    db.invitationRows[0]!.createdAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+
+    await expect(invitationsService.confirmInvitation(
+      'danny-user-uuid-999', owner.tenantId, 'danny@finca.cr',
+      { invitacionId: inviteResult.invitacionId, nombreCompleto: 'QA' }, db.manager,
+    )).rejects.toThrow(/no está vigente/i);
+    expect(db.invitationRows[0]?.estado).toBe('PENDIENTE');
+    expect(db.auditRows.map((row) => row.tipoEvento)).toEqual(['INVITACION_ENVIADA']);
+  });
+
+  it('lists persisted invitation state and expiry only for the requested finca', async () => {
+    const invite = await invitationsService.inviteUser(
+      owner, { correo: 'danny@finca.cr', rol: 'peon' }, db.manager,
+    );
+    db.invitationRows.push({
+      id: 'finca-b-invite', tenantId: 'finca-b', correo: 'otra@finca.cr',
+      rol: 'veterinario', invitadoPor: 'owner-b', estado: 'PENDIENTE',
+      createdAt: new Date().toISOString(),
+    });
+
+    const rows = await invitationsService.listInvitations(owner.tenantId, db.manager);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      invitacionId: invite.invitacionId,
+      correo: 'danny@finca.cr',
+      estado: 'PENDIENTE',
+      expiresAt: invite.expiresAt,
+    });
+  });
+
+  it('does not accept an invitation under a different finca token', async () => {
+    const invite = await invitationsService.inviteUser(
+      owner, { correo: 'danny@finca.cr', rol: 'peon' }, db.manager,
+    );
+    await expect(invitationsService.confirmInvitation(
+      'danny-user-uuid-999', 'finca-b', 'danny@finca.cr',
+      { invitacionId: invite.invitacionId, nombreCompleto: 'QA' }, db.manager,
+    )).rejects.toThrow(/no está vigente/i);
+    expect(db.invitationRows[0]?.estado).toBe('PENDIENTE');
   });
 
   it('discards a client supplied role and applies only the persisted invitation role', async () => {
@@ -286,7 +358,12 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
       'danny-user-uuid-999',
       owner.tenantId,
       'danny@finca.cr',
-      { rol: 'propietario', isAdmin: true },
+      {
+        invitacionId: inviteResult.invitacionId,
+        nombreCompleto: 'Invitado de prueba',
+        rol: 'propietario',
+        isAdmin: true,
+      },
       db.manager,
     );
 
@@ -328,5 +405,20 @@ describe('Invitaciones y auditoría sin fallback de memoria', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects an existing account and a pending invitation for another finca', async () => {
+    db.userEmails.add('existente@finca.cr');
+    await expect(invitationsService.inviteUser(
+      owner, { correo: 'EXISTENTE@finca.cr', rol: 'peon' }, db.manager,
+    )).rejects.toThrow(/ya pertenece/i);
+
+    db.invitationRows.push({
+      id: 'otra-invitacion', tenantId: 'otra-finca', correo: 'otra@finca.cr',
+      rol: 'peon', invitadoPor: 'owner', estado: 'PENDIENTE', createdAt: new Date().toISOString(),
+    });
+    await expect(invitationsService.inviteUser(
+      owner, { correo: 'otra@finca.cr', rol: 'peon' }, db.manager,
+    )).rejects.toThrow(/otra finca/i);
   });
 });
