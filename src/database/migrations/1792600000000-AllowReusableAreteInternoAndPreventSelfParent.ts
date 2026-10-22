@@ -9,7 +9,25 @@ export class AllowReusableAreteInternoAndPreventSelfParent1792600000000
     // 1. Eliminar la restricción UNIQUE incondicional previa sobre (tenant_id, arete_interno) si existe
     await queryRunner.query(`
       DO $$
+      DECLARE
+          r RECORD;
       BEGIN
+          FOR r IN (
+              SELECT conname
+              FROM pg_constraint c
+              JOIN pg_class t ON c.conrelid = t.oid
+              WHERE t.relname = 'animal'
+                AND c.contype = 'u'
+                AND ARRAY(
+                    SELECT a.attname::text
+                    FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                    ORDER BY k.ord
+                ) = ARRAY['tenant_id', 'arete_interno']
+          ) LOOP
+              EXECUTE 'ALTER TABLE public.animal DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
+          END LOOP;
+
           IF EXISTS (
               SELECT 1
               FROM information_schema.table_constraints
@@ -23,6 +41,7 @@ export class AllowReusableAreteInternoAndPreventSelfParent1792600000000
 
       DROP INDEX IF EXISTS public.idx_animal_tenant_arete_unique;
       DROP INDEX IF EXISTS public.UQ_animal_tenant_id_arete_interno;
+      DROP INDEX IF EXISTS public."UQ_397b1e68f25cf3b2b256636b43f";
     `);
 
     // 2. Crear índice único condicional (partial unique index):
@@ -36,6 +55,12 @@ export class AllowReusableAreteInternoAndPreventSelfParent1792600000000
     `);
 
     // 3. Restricciones de integridad a nivel de base de datos para impedir auto-parentesco:
+    // Limpia datos legados donde un animal fue registrado como su propia madre o padre
+    await queryRunner.query(`
+      UPDATE public.animal SET madre_id = NULL WHERE madre_id = id;
+      UPDATE public.animal SET padre_id = NULL WHERE padre_id = id;
+    `);
+
     // Un animal nunca puede ser su propia madre ni su propio padre.
     await queryRunner.query(`
       DO $$

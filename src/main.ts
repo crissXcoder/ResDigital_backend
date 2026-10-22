@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { createRateLimitKey } from './auth/rate-limit-key.js';
+import { SupabaseJwtService } from './auth/services/supabase-jwt.service.js';
 
 function origenesPermitidos(): string[] {
   const configurado = process.env.FRONTEND_URL;
@@ -28,6 +30,7 @@ function origenesPermitidos(): string[] {
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
+  const keyGenerator = createRateLimitKey(app.get(SupabaseJwtService));
 
   // Cabeceras de seguridad: CSP, HSTS, X-Content-Type-Options, X-Frame-Options.
   app.use(helmet());
@@ -37,6 +40,7 @@ async function bootstrap(): Promise<void> {
     rateLimit({
       windowMs: Number(process.env.THROTTLE_TTL ?? 60000),
       limit: Number(process.env.THROTTLE_LIMIT ?? 120),
+      keyGenerator,
       standardHeaders: 'draft-7',
       legacyHeaders: false,
       message: {
@@ -54,6 +58,7 @@ async function bootstrap(): Promise<void> {
     rateLimit({
       windowMs: 60000,
       limit: 10,
+      keyGenerator,
       standardHeaders: 'draft-7',
       legacyHeaders: false,
       message: {
