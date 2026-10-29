@@ -1,4 +1,5 @@
 import { ZONA_HORARIA_FINCA } from '../reproductivo/services/reproductive-calculation.service.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 
 /** Máximo de días entre la aplicación y la última administración de un protocolo. */
 export const MAX_DIAS_PROTOCOLO = 60;
@@ -78,7 +79,7 @@ export function validarFechasTratamiento(input: {
   const fecha = input.fecha.slice(0, 10);
   const ultima = (input.fechaUltimaAdministracion ?? fecha).slice(0, 10);
   if (fecha > input.hoy) {
-    return `La fecha de aplicación (${fecha}) no puede ser posterior a hoy (${input.hoy}).`;
+    return `La fecha de aplicación (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(input.hoy)}).`;
   }
   if (ultima < fecha) {
     return 'La fecha de última administración no puede ser anterior a la fecha de aplicación.';

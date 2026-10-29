@@ -13,6 +13,7 @@ import { CreatePotreroDto } from './dto/create-potrero.dto.js';
 import { UpdatePotreroDto } from './dto/update-potrero.dto.js';
 import { AsignarAnimalesDto } from './dto/asignar-animales.dto.js';
 import { hoyEnZona } from '../reproductivo/services/reproductive-calculation.service.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 import { calcularUaAnimal } from './constants/ua-factors.js';
 
 @Injectable()
@@ -163,7 +164,7 @@ export class PotrerosService {
           });
           if (ultimoMovimiento && fechaEvento < ultimoMovimiento.fechaEvento) {
             throw new ConflictException(
-              `El movimiento de '${animal.areteInterno}' no puede fecharse antes de su último movimiento (${ultimoMovimiento.fechaEvento}).`,
+              `El movimiento de '${animal.areteInterno}' no puede fecharse antes de su último movimiento (${formatearFechaLegible(ultimoMovimiento.fechaEvento)}).`,
             );
           }
         }

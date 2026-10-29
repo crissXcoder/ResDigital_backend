@@ -29,6 +29,7 @@ import type { RegistrarDiagnosticoDto } from '../dto/registrar-diagnostico.dto.j
 import type { RegistrarPartoDto } from '../dto/registrar-parto.dto.js';
 import type { RegistrarSecadoDto } from '../dto/registrar-secado.dto.js';
 import { AnimalesService } from '../../animales/animales.service.js';
+import { formatearFechaLegible } from '../../common/fechas.js';
 
 /** Ventana por defecto del calendario reproductivo del Dashboard, en días. */
 export const DIAS_VENTANA_DEFAULT = 60;
@@ -645,7 +646,7 @@ export class ReproductiveService {
   ): void {
     if (eventDate < referenceDate) {
       throw new BadRequestException(
-        `La fecha del ${eventName} no puede ser anterior a la fecha del ${referenceName} (${referenceDate}).`,
+        `La fecha del ${eventName} no puede ser anterior a la fecha del ${referenceName} (${formatearFechaLegible(referenceDate)}).`,
       );
     }
   }
