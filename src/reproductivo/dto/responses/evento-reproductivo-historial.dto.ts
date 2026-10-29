@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FACILIDADES_PARTO } from '../../entities/evento-parto.entity.js';
 import type { EventoHistoricoReproductivo } from '../../services/reproductive-state.service.js';
 
@@ -29,6 +29,10 @@ export class DetalleDiagnosticoDto {
 }
 
 export class DetallePartoDto {
+  @ApiPropertyOptional({ type: 'string', nullable: true, format: 'uuid' })
+  criaAnteriorId?: string | null;
+  @ApiPropertyOptional({ enum: ['CONSERVAR', 'DESVINCULAR'], nullable: true })
+  accionFiliacionAnterior?: 'CONSERVAR' | 'DESVINCULAR' | null;
   @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
   eventoServicioId: string | null;
   @ApiProperty({ type: 'string', format: 'uuid', nullable: true })
@@ -121,6 +125,8 @@ export function aHistorialDto(
     };
   } else if (parto) {
     detalle = {
+      criaAnteriorId: parto.criaAnteriorId,
+      accionFiliacionAnterior: parto.accionFiliacionAnterior,
       eventoServicioId: parto.eventoServicioId,
       criaAnimalId: parto.criaAnimalId,
       criaAreteInterno: parto.criaAnimal?.areteInterno ?? null,

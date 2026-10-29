@@ -18,7 +18,7 @@ describe('RegistrarPartoDto — modalidades de cría', () => {
   it('pasa con solo nuevaCria', async () => {
     const dto = plainToInstance(RegistrarPartoDto, {
       fechaEvento: '2026-09-10',
-      nuevaCria: { areteInterno: 'CR-2026-001' },
+      nuevaCria: { areteInterno: 'CR-2026-001', sexo: 'Hembra' },
     });
     const errors = await validate(dto);
     expect(errors).toHaveLength(0);
@@ -36,7 +36,7 @@ describe('RegistrarPartoDto — modalidades de cría', () => {
     const dto = plainToInstance(RegistrarPartoDto, {
       fechaEvento: '2026-09-10',
       criaAnimalId: CRIA_ID,
-      nuevaCria: { areteInterno: 'CR-01' },
+      nuevaCria: { areteInterno: 'CR-01', sexo: 'Hembra' },
     });
     const errors = await validate(dto);
     expect(errors.some((e) => e.property === 'criaAnimalId')).toBe(true);

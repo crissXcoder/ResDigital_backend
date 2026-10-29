@@ -97,8 +97,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
       return {
         status: exception.getStatus(),
-        message: Array.isArray(message) ? message.join('; ') : message,
+        message: (Array.isArray(message) ? message.join('; ') : message)
+          .replace('Validation failed (uuid is expected)', 'El identificador debe ser un UUID válido.'),
         error: exception.name,
+      };
+    }
+
+    if (
+      typeof exception === 'object' &&
+      exception !== null &&
+      'type' in exception &&
+      exception.type === 'entity.too.large'
+    ) {
+      return {
+        status: HttpStatus.PAYLOAD_TOO_LARGE,
+        message: 'La solicitud supera el tamaño máximo permitido.',
+        error: 'PayloadTooLarge',
       };
     }
 
@@ -194,7 +208,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private detalleTecnico(exception: unknown): string {
     if (exception instanceof QueryFailedError) {
       const codigo = (exception as QueryFailedError & { code?: string }).code;
-      return `QueryFailedError[${codigo ?? 'sin código'}] ${exception.message}`;
+      return `QueryFailedError[${codigo ?? 'sin código'}]`;
     }
     if (exception instanceof Error) {
       return `${exception.name}: ${exception.message}`;

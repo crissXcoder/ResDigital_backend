@@ -3,6 +3,8 @@ export const TIPOS_LACTANCIA = [
   'SECADO',
   'INICIO_LACTANCIA',
   'FIN_LACTANCIA',
+  'BAJA',
+  'REACTIVACION',
 ] as const;
 export type TipoEventoLactancia = (typeof TIPOS_LACTANCIA)[number];
 

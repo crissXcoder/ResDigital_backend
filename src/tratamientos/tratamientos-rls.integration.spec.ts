@@ -9,6 +9,7 @@ import { Potrero } from '../potreros/entities/potrero.entity.js';
 import { Medicamento } from '../sanitary/entities/medicamento.entity.js';
 import { Padecimiento } from '../sanitary/entities/padecimiento.entity.js';
 import { EventoTratamiento } from './entities/evento-tratamiento.entity.js';
+import { EventoProduccionLeche } from '../produccion/entities/evento-produccion-leche.entity.js';
 import { TratamientosService } from './tratamientos.service.js';
 import {
   crearAdminDataSource,
@@ -73,6 +74,7 @@ describe('Integración RLS — MOD-02 Tratamientos como evento (base real)', () 
         Animal,
         Potrero,
         Evento,
+        EventoProduccionLeche,
         EventoTratamiento,
         Medicamento,
         Padecimiento,
@@ -85,6 +87,7 @@ describe('Integración RLS — MOD-02 Tratamientos como evento (base real)', () 
       Potrero,
       Evento,
       EventoTratamiento,
+      EventoProduccionLeche,
       Medicamento,
       Padecimiento,
     ]);

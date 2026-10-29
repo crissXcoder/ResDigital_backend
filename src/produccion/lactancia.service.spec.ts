@@ -163,8 +163,8 @@ describe('LactanciaService', () => {
         Evento,
         expect.objectContaining({ tipo: 'INICIO_LACTANCIA', revertido: false }),
       );
-      expect(query).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), [
-        'produccion-animal:v1',
+      expect(query).toHaveBeenCalledWith(expect.stringContaining('ORDER BY id FOR UPDATE'), [
+        TENANT, ['v1'],
       ]);
     });
 

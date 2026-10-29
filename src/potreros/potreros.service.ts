@@ -126,6 +126,8 @@ export class PotrerosService {
           ids: idsUnicos,
           tenantId,
         })
+        .orderBy('animal.id', 'ASC')
+        .setLock('pessimistic_write')
         .getMany();
 
       if (animales.length !== idsUnicos.length) {

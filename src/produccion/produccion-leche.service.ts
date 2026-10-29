@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Between, In, LessThanOrEqual, MoreThan, type EntityManager } from 'typeorm';
 import { Animal } from '../animales/entities/animal.entity.js';
+import { lockAnimalsForWrite } from '../animales/animal-write-lock.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
 import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
@@ -104,6 +105,7 @@ function toResponse(
 ): ProduccionLecheResponseDto {
   return {
     id: evento.id,
+    eventoCorrigeId: evento.eventoCorrigeId,
     animalId: evento.animalId,
     fecha: evento.fechaEvento,
     turno: detalle.turno,
@@ -129,7 +131,7 @@ export class ProduccionLecheService {
     manager: EntityManager,
   ): Promise<ProduccionLecheResponseDto> {
     return manager.transaction(async (trx) => {
-      await bloquearAnimalProduccion(trx, dto.animalId);
+      await bloquearAnimalProduccion(trx, dto.animalId, tenantId);
       const animal = await buscarAnimal(trx, tenantId, dto.animalId);
       const fecha = dto.fecha.slice(0, 10);
 
@@ -227,11 +229,15 @@ export class ProduccionLecheService {
 
   async update(
     tenantId: string,
+    usuarioId: string,
     id: string,
     dto: UpdateProduccionLecheDto,
     manager: EntityManager,
   ): Promise<ProduccionLecheResponseDto> {
     return manager.transaction(async (trx) => {
+      const referencia = await trx.findOne(Evento, { where: { id, tenantId, tipo: 'PRODUCCION_LECHE' } });
+      if (!referencia) throw new NotFoundException('Producción no encontrada en esta finca.');
+      await bloquearAnimalProduccion(trx, referencia.animalId, tenantId);
       const evento = await trx.findOne(Evento, {
         where: { id, tenantId, tipo: 'PRODUCCION_LECHE' },
         lock: { mode: 'pessimistic_write' },
@@ -246,24 +252,38 @@ export class ProduccionLecheService {
         throw new BadRequestException(`No se puede modificar la producción '${id}' porque fue anulada.`);
       }
 
-      await bloquearAnimalProduccion(trx, evento.animalId);
 
-      detalle.litros = dto.litros;
-      if (dto.notas !== undefined) {
-        evento.notas = dto.notas?.trim() || null;
-        await trx.save(Evento, evento);
-      }
-      await trx.save(EventoProduccionLeche, detalle);
+      evento.revertido = true;
+      await trx.save(Evento, evento);
+      const corregido = await trx.save(Evento, trx.create(Evento, {
+        tenantId,
+        animalId: evento.animalId,
+        tipo: 'PRODUCCION_LECHE',
+        fechaEvento: evento.fechaEvento,
+        usuarioId,
+        revertido: false,
+        eventoCorrigeId: evento.id,
+        notas: dto.notas !== undefined ? dto.notas?.trim() || null : evento.notas,
+      }));
+      corregido.notas = `${dto.motivo?.trim() || 'Corrección de producción'}${corregido.notas ? ` · ${corregido.notas}` : ''}`;
+      await trx.save(Evento, corregido);
+      const nuevoDetalle = await trx.save(EventoProduccionLeche, trx.create(EventoProduccionLeche, {
+        eventoId: corregido.id,
+        turno: detalle.turno,
+        litros: dto.litros,
+        disposicion: detalle.disposicion,
+        tratamientoEventoId: detalle.tratamientoEventoId,
+      }));
 
       let fechaLiberacion: string | null = null;
-      if (detalle.tratamientoEventoId) {
+      if (nuevoDetalle.tratamientoEventoId) {
         const tratamiento = await trx.findOne(EventoTratamiento, {
-          where: { eventoId: detalle.tratamientoEventoId },
+          where: { eventoId: nuevoDetalle.tratamientoEventoId },
         });
         fechaLiberacion = tratamiento?.fechaLiberacionLeche ?? null;
       }
 
-      return toResponse(evento, detalle, fechaLiberacion);
+      return toResponse(corregido, nuevoDetalle, fechaLiberacion);
     });
   }
 
@@ -275,6 +295,9 @@ export class ProduccionLecheService {
     manager: EntityManager,
   ): Promise<AnulacionProduccionResponseDto> {
     return manager.transaction(async (trx) => {
+      const referencia = await trx.findOne(Evento, { where: { id, tenantId, tipo: 'PRODUCCION_LECHE' } });
+      if (!referencia) throw new NotFoundException('Producción no encontrada en esta finca.');
+      await bloquearAnimalProduccion(trx, referencia.animalId, tenantId);
       const original = await trx.findOne(Evento, {
         where: { id, tenantId, tipo: 'PRODUCCION_LECHE' },
         lock: { mode: 'pessimistic_write' },
@@ -288,7 +311,6 @@ export class ProduccionLecheService {
       if (original.revertido) {
         throw new BadRequestException(`La producción '${id}' ya fue anulada.`);
       }
-      await bloquearAnimalProduccion(trx, original.animalId);
       original.revertido = true;
       await trx.save(Evento, original);
       const anulacion = await trx.save(
@@ -431,8 +453,8 @@ export class ProduccionLecheService {
     const vistos = new Set<string>();
     for (let i = 0; i < dto.filas.length; i++) {
       const f = dto.filas[i];
-      const arete = (f.areteInterno || '').replace(/^#/, '').trim();
-      const clave = `${arete}|${f.fecha}|${f.turno}`.toLowerCase();
+      const arete = (f.areteInterno || '').trim();
+      const clave = `${arete}|${f.fecha}|${f.turno}`;
       if (vistos.has(clave)) {
         throw new ConflictException(
           `Fila ${i + 1}: Ya existe un registro duplicado en el mismo lote para el arete '${arete}', turno ${f.turno} y fecha ${f.fecha}.`,
@@ -443,6 +465,14 @@ export class ProduccionLecheService {
 
     return manager.transaction(async (trx) => {
       const registros: ProduccionLecheResponseDto[] = [];
+      const resueltos = new Map<string, string>();
+      for (const [index, fila] of dto.filas.entries()) {
+        const arete = fila.areteInterno.trim();
+        const animal = await trx.findOne(Animal, { where: { tenantId, areteInterno: arete, activo: true } });
+        if (!animal) throw new NotFoundException(`Fila ${index + 1}: No se encontró un animal activo con el arete '${arete}' en esta finca.`);
+        resueltos.set(arete, animal.id);
+      }
+      await lockAnimalsForWrite(trx, tenantId, [...resueltos.values()]);
       let litrosTotales = 0;
       let litrosComercializables = 0;
       let litrosDescarte = 0;
@@ -450,7 +480,7 @@ export class ProduccionLecheService {
       for (let i = 0; i < dto.filas.length; i++) {
         const fila = dto.filas[i];
         const fecha = fila.fecha.slice(0, 10);
-        const arete = (fila.areteInterno || '').replace(/^#/, '').trim();
+        const arete = (fila.areteInterno || '').trim();
 
         if (fecha > hoy) {
           throw new BadRequestException(
@@ -468,7 +498,9 @@ export class ProduccionLecheService {
           );
         }
 
-        await bloquearAnimalProduccion(trx, animal.id);
+        if (animal.id !== resueltos.get(arete) || animal.activo === false) {
+          throw new ConflictException(`Fila ${i + 1}: La identidad o estado del animal cambió; revisá el lote antes de reintentar.`);
+        }
 
         if (!esHembra(animal)) {
           throw new BadRequestException(

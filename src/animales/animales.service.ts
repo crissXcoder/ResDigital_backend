@@ -5,13 +5,19 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
-import { EntityManager } from 'typeorm';
+import { EntityManager, IsNull } from 'typeorm';
+import { hoyEnZona } from '../common/fechas.js';
 import { AnimalDocumentStorageService } from './animal-document-storage.service.js';
 import { registerAfterRollbackCallback } from '../auth/interceptors/rls-transaction.interceptor.js';
 import { Animal } from './entities/animal.entity.js';
+import { lockAnimalsForWrite } from './animal-write-lock.js';
+import { Potrero } from '../potreros/entities/potrero.entity.js';
+import { CatalogoRaza } from '../catalogos/entities/catalogo-raza.entity.js';
 import { DocumentoAnimal } from './entities/documento-animal.entity.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoBaja } from './entities/evento-baja.entity.js';
+import { EventoReactivacion } from './entities/evento-reactivacion.entity.js';
+import type { ReactivarAnimalDto } from './dto/reactivar-animal.dto.js';
 import type { CreateAnimalDto } from './dto/create-animal.dto.js';
 import type { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import type { BajaAnimalDto } from './dto/baja-animal.dto.js';
@@ -126,11 +132,11 @@ export class AnimalesService {
         areteInterno: true,
         nombre: true,
         sexo: true,
+        activo: true,
         categoria: true,
         fechaNacimiento: true,
         madreId: true,
         padreId: true,
-        activo: true,
       },
       order: { areteInterno: 'ASC' },
     });
@@ -394,6 +400,7 @@ export class AnimalesService {
     updateAnimalDto: UpdateAnimalDto,
     manager: EntityManager,
   ) {
+    await lockAnimalsForWrite(manager, tenantId, [id, ...(updateAnimalDto.madreId ? [updateAnimalDto.madreId] : []), ...(updateAnimalDto.padreId ? [updateAnimalDto.padreId] : [])]);
     const animal = await this.findOne(id, tenantId, manager);
     const normalizado = this.normalizarOpcionales(updateAnimalDto);
 
@@ -466,6 +473,16 @@ export class AnimalesService {
     }
 
     if (
+      animal.numeroOficialDiio !== null &&
+      normalizado.numeroOficialDiio !== undefined &&
+      normalizado.numeroOficialDiio !== animal.numeroOficialDiio
+    ) {
+      throw new ConflictException(
+        'El DIIO oficial asignado no se puede cambiar ni retirar.',
+      );
+    }
+
+    if (
       normalizado.numeroOficialDiio &&
       normalizado.numeroOficialDiio !== animal.numeroOficialDiio
     ) {
@@ -494,6 +511,7 @@ export class AnimalesService {
     manager: EntityManager,
     actorUserId?: string,
   ) {
+    await lockAnimalsForWrite(manager, tenantId, [id]);
     const animal = await this.findOne(id, tenantId, manager);
 
     if (!animal.activo) {
@@ -568,6 +586,7 @@ export class AnimalesService {
       .andWhere('evento.tenant_id = :tenantId', { tenantId })
       .andWhere('evento.tipo = :tipo', { tipo: 'BAJA' })
       .andWhere('evento.revertido = false')
+      .andWhere('NOT EXISTS (SELECT 1 FROM evento_reactivacion er WHERE er.evento_baja_id = eb.evento_id)')
       .orderBy('evento.fecha_registro', 'DESC')
       .getOne();
 
@@ -596,6 +615,19 @@ export class AnimalesService {
       pesoFinalKg: eventoBaja.pesoFinalKg,
       usuarioId: eventoBaja.evento.usuarioId,
     };
+  }
+
+  async getHistorialBajas(animalId: string, tenantId: string, manager: EntityManager) {
+    await this.findOne(animalId, tenantId, manager);
+    return manager.query<Array<{ eventoId: string; fecha: string; tipoBaja: string; motivo: string | null; revertido: boolean; modalidad: string | null; fechaReactivacion: string | null; motivoReactivacion: string | null }>>(`
+      SELECT b.evento_id AS "eventoId", e.fecha_evento::text AS fecha,
+        b.tipo_baja AS "tipoBaja", b.motivo, e.revertido,
+        r.modalidad, re.fecha_evento::text AS "fechaReactivacion", r.motivo AS "motivoReactivacion"
+      FROM evento_baja b JOIN evento e ON e.id = b.evento_id
+      LEFT JOIN evento_reactivacion r ON r.evento_baja_id = b.evento_id
+      LEFT JOIN evento re ON re.id = r.evento_id
+      WHERE e.tenant_id = $1 AND e.animal_id = $2
+      ORDER BY e.fecha_evento, e.fecha_registro`, [tenantId, animalId]);
   }
 
   async getDocumentos(
@@ -727,6 +759,7 @@ export class AnimalesService {
         id: true,
         tenantId: true,
         sexo: true,
+        activo: true,
         razaId: true,
         razaOtra: true,
         potreroId: true,
@@ -744,6 +777,9 @@ export class AnimalesService {
       throw new BadRequestException(
         'El animal registrado como madre del parto debe ser de sexo Hembra.',
       );
+    }
+    if (!madre.activo) {
+      throw new ConflictException('No se puede registrar un parto para una madre dada de baja.');
     }
 
     // Modalidad A: Vincular cría existente
@@ -770,6 +806,19 @@ export class AnimalesService {
         );
       }
 
+      const fechaPartoIso = fechaParto instanceof Date
+        ? fechaParto.toISOString().slice(0, 10)
+        : String(fechaParto ?? '').slice(0, 10);
+      if (cria.fechaNacimiento && cria.fechaNacimiento.slice(0, 10) !== fechaPartoIso) {
+        throw new BadRequestException('La fecha de nacimiento de la cría no coincide con la fecha del parto.');
+      }
+      if (!cria.fechaNacimiento) {
+        if (!dto.confirmarFechaNacimiento || !fechaPartoIso) {
+          throw new BadRequestException('La cría no tiene fecha de nacimiento. Confirmá que corresponde a este parto para registrar esa fecha.');
+        }
+        cria.fechaNacimiento = fechaPartoIso;
+      }
+
       const hayCiclo = await this.detectarCicloAncestros(
         cria.id,
         madreId,
@@ -787,6 +836,7 @@ export class AnimalesService {
         return await manager.save(cria);
       }
 
+      if (dto.confirmarFechaNacimiento) return await manager.save(cria);
       return cria;
     }
 
@@ -823,10 +873,13 @@ export class AnimalesService {
         }
       }
 
-      const sexo = nueva.sexo ?? 'Hembra';
+      if (!nueva.sexo) {
+        throw new BadRequestException('Seleccioná el sexo de la cría.');
+      }
+      const sexo = nueva.sexo;
       if (sexo !== 'Hembra' && sexo !== 'Macho') {
         throw new BadRequestException(
-          "El sexo de la cría debe ser 'Hembra' o 'Macho'.",
+          "El sexo de la cría debe especificarse como 'Hembra' o 'Macho'.",
         );
       }
       const categoriaDefault = sexo === 'Hembra' ? 'Ternera' : 'Ternero';
@@ -835,6 +888,26 @@ export class AnimalesService {
       const razaId = nueva.razaId || madre.razaId;
       const razaOtra = nueva.razaOtra || (nueva.razaId ? null : madre.razaOtra);
       const potreroId = nueva.potreroId ?? madre.potreroId ?? null;
+
+      const razaValida = await manager.findOne(CatalogoRaza, {
+        where: [
+          { id: razaId, tenantId },
+          { id: razaId, tenantId: IsNull() },
+        ],
+        select: { id: true },
+      });
+      if (!razaValida) {
+        throw new BadRequestException('La raza de la cría no existe en esta finca ni en el catálogo global.');
+      }
+      if (potreroId) {
+        const potreroValido = await manager.findOne(Potrero, {
+          where: { id: potreroId, tenantId },
+          select: { id: true },
+        });
+        if (!potreroValido) {
+          throw new BadRequestException('El potrero de la cría no existe en esta finca.');
+        }
+      }
 
       let fechaNacimientoStr: string;
       if (nueva.fechaNacimiento) {
@@ -846,6 +919,13 @@ export class AnimalesService {
             : String(fechaParto).slice(0, 10);
       } else {
         fechaNacimientoStr = new Date().toISOString().slice(0, 10);
+      }
+
+      const fechaPartoIso = fechaParto instanceof Date
+        ? fechaParto.toISOString().slice(0, 10)
+        : String(fechaParto ?? '').slice(0, 10);
+      if (fechaPartoIso && fechaNacimientoStr !== fechaPartoIso) {
+        throw new BadRequestException('La fecha de nacimiento de una cría nueva debe coincidir con la fecha del parto.');
       }
 
       const hoy = new Date().toISOString().slice(0, 10);
@@ -923,53 +1003,60 @@ export class AnimalesService {
   async reactivar(
     id: string,
     tenantId: string,
+    usuarioId: string,
+    dto: ReactivarAnimalDto,
     manager: EntityManager,
   ): Promise<Animal> {
-    const animal = await this.findOne(id, tenantId, manager);
-
-    if (animal.activo) {
-      throw new ConflictException('El animal ya se encuentra activo en el hato.');
-    }
-
-    const conflictoArete = await manager.findOne(Animal, {
-      where: {
-        tenantId,
-        areteInterno: animal.areteInterno,
-        activo: true,
-      },
-      select: { id: true, areteInterno: true, nombre: true },
-    });
-
-    if (conflictoArete && conflictoArete.id !== id) {
-      throw new ConflictException(
-        `No es posible reactivar el animal: el arete interno "${animal.areteInterno}" está actualmente en uso por otro animal activo (${conflictoArete.nombre || conflictoArete.id}).`,
-      );
-    }
-
-    if (animal.numeroOficialDiio) {
-      const conflictoDiio = await manager.findOne(Animal, {
-        where: {
-          tenantId,
-          numeroOficialDiio: animal.numeroOficialDiio,
-        },
-        select: { id: true },
+    return manager.transaction(async (trx) => {
+      const animal = await trx.findOne(Animal, { where: { id, tenantId }, lock: { mode: 'pessimistic_write' } });
+      if (!animal) throw new NotFoundException(`Animal con ID '${id}' no encontrado en esta finca.`);
+      if (animal.activo) throw new ConflictException('El animal ya se encuentra activo en el hato.');
+      const baja = await trx.findOne(EventoBaja, {
+        relations: { evento: true },
+        where: { eventoId: dto.eventoBajaId, evento: { tenantId, animalId: id, tipo: 'BAJA', revertido: false } },
       });
-
-      if (conflictoDiio && conflictoDiio.id !== id) {
-        throw new ConflictException(
-          `No es posible reactivar el animal: el número oficial DIIO "${animal.numeroOficialDiio}" ya está asignado a otro animal en esta finca.`,
-        );
+      if (!baja) throw new NotFoundException('La baja indicada no está vigente para este animal y finca.');
+      if (dto.modalidad === 'RETORNO' && baja.tipoBaja === 'Fallecimiento') {
+        throw new BadRequestException('Un animal fallecido no admite retorno; use corrección de baja si el registro fue erróneo.');
       }
-    }
-
-    animal.activo = true;
-    animal.fechaBaja = null;
-    animal.tipoBaja = null;
-    animal.motivoBaja = null;
-    animal.precioVentaCrc = null;
-    animal.pesoFinalKg = null;
-
-    return await manager.save(animal);
+      if (dto.fechaEvento < baja.evento.fechaEvento || dto.fechaEvento > hoyEnZona()) {
+        throw new BadRequestException('La fecha de reactivación debe estar entre la fecha de baja y hoy.');
+      }
+      const areteSolicitado = dto.areteInterno?.trim();
+      const conflictoAreteOriginal = await trx.findOne(Animal, { where: { tenantId, areteInterno: animal.areteInterno, activo: true } });
+      if (conflictoAreteOriginal && (!areteSolicitado || areteSolicitado === animal.areteInterno)) {
+        throw new ConflictException('El arete interno está en uso por otro animal activo; registre un arete interno distinto para este animal.');
+      }
+      if (!conflictoAreteOriginal && areteSolicitado && areteSolicitado !== animal.areteInterno) {
+        throw new BadRequestException('El arete nuevo solo se registra cuando el arete anterior está ocupado.');
+      }
+      const areteNuevo = conflictoAreteOriginal ? areteSolicitado! : animal.areteInterno;
+      if (conflictoAreteOriginal && await trx.findOne(Animal, { where: { tenantId, areteInterno: areteNuevo, activo: true } })) {
+        throw new ConflictException('El nuevo arete interno también está en uso por otro animal activo.');
+      }
+      if (dto.modalidad === 'CORRECCION') {
+        baja.evento.revertido = true;
+        await trx.save(Evento, baja.evento);
+      }
+      const evento = await trx.save(Evento, trx.create(Evento, {
+        tenantId, animalId: id, tipo: 'REACTIVACION', fechaEvento: dto.fechaEvento,
+        usuarioId, revertido: false,
+        eventoCorrigeId: dto.modalidad === 'CORRECCION' ? baja.eventoId : null,
+        notas: dto.motivo,
+      }));
+      await trx.save(EventoReactivacion, trx.create(EventoReactivacion, {
+        eventoId: evento.id, eventoBajaId: baja.eventoId, modalidad: dto.modalidad,
+        motivo: dto.motivo, areteAnterior: animal.areteInterno, areteNuevo,
+      }));
+      animal.activo = true;
+      animal.areteInterno = areteNuevo;
+      animal.fechaBaja = null;
+      animal.tipoBaja = null;
+      animal.motivoBaja = null;
+      animal.precioVentaCrc = null;
+      animal.pesoFinalKg = null;
+      return trx.save(Animal, animal);
+    });
   }
 
   /**
