@@ -67,6 +67,12 @@ export class UpdateProduccionLecheDto {
   @MaxLength(2000)
   @IsOptional()
   notas?: string;
+
+  @ApiPropertyOptional({ minLength: 3, maxLength: 500 })
+  @IsString()
+  @Length(3, 500)
+  @IsOptional()
+  motivo?: string;
 }
 
 export class AnularProduccionDto {
@@ -96,6 +102,9 @@ export class ResumenProduccionQueryDto {
 export class ProduccionLecheResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
+
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  eventoCorrigeId: string | null;
 
   @ApiProperty({ format: 'uuid' })
   animalId: string;
@@ -203,7 +212,7 @@ export class FilaImportarProduccionLecheDto {
   @ApiProperty({ description: 'Arete interno del animal activo', example: '101' })
   @IsString()
   @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.replace(/^#/, '').trim() : value,
+    typeof value === 'string' ? value.trim() : value,
   )
   areteInterno: string;
 

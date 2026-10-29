@@ -257,6 +257,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
 
       vi.spyOn(mockEntityManager, 'findOne')
         .mockResolvedValueOnce(mockVacaA as Animal) // Búsqueda de animal
+        .mockResolvedValueOnce(mockVacaA as Animal) // Relectura con lock
         .mockResolvedValueOnce(eventoPrevio as Evento); // Búsqueda de evento anterior
 
       const dto = {
@@ -292,6 +293,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
 
       vi.spyOn(mockEntityManager, 'findOne')
         .mockResolvedValueOnce(mockVacaA as Animal)
+        .mockResolvedValueOnce(mockVacaA as Animal) // Relectura bajo lock
         .mockResolvedValueOnce(mockServicioEvento as Evento);
       vi.spyOn(stateService, 'calcularEstado').mockResolvedValue({
         animalId: mockVacaA.id!,
@@ -474,13 +476,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       expect(result.evento.tipo).toBe('PARTO');
       expect(result.parto.facilidadParto).toBe('Normal');
       expect(result.parto.criaAnimalId).toBeNull();
-      expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
-        tenantA,
-        mockVacaA.id,
-        { criaAnimalId: undefined, nuevaCria: undefined },
-        '2026-09-07',
-        mockEntityManager,
-      );
+      expect(animalesService.crearOValidarCriaParaParto).not.toHaveBeenCalled();
     });
 
     it('persiste el id que devuelve el contrato al dar de alta una cría nueva', async () => {
@@ -504,6 +500,7 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       );
 
       expect(result.parto.criaAnimalId).toBe('cria-nueva-uuid');
+      expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledTimes(1);
       expect(animalesService.crearOValidarCriaParaParto).toHaveBeenCalledWith(
         tenantA,
         mockVacaA.id,

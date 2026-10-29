@@ -51,6 +51,8 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
     const mockRepoAnimal = {
       createQueryBuilder: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        setLock: vi.fn().mockReturnThis(),
         getMany: vi.fn().mockResolvedValue([animalExistente]),
       }),
       save: vi.fn().mockImplementation((a) => Promise.resolve(a)),
@@ -158,6 +160,8 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
           return {
             createQueryBuilder: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        setLock: vi.fn().mockReturnThis(),
               getMany: vi.fn().mockResolvedValue([animalSinPotrero]),
             }),
             save: vi.fn().mockResolvedValue(animalSinPotrero),
@@ -227,6 +231,8 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
           return {
             createQueryBuilder: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        setLock: vi.fn().mockReturnThis(),
               getMany: vi.fn().mockResolvedValue([]), // Ningún animal coincide con el tenant
             }),
           };
@@ -263,6 +269,8 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
           return {
             createQueryBuilder: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        setLock: vi.fn().mockReturnThis(),
               getMany: vi.fn().mockResolvedValue([animalInactivo]),
             }),
           };
@@ -298,6 +306,8 @@ describe('PotrerosService - Trazabilidad Histórica (POT-T001)', () => {
           return {
             createQueryBuilder: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockReturnThis(),
+        setLock: vi.fn().mockReturnThis(),
               getMany: vi.fn().mockResolvedValue([animalActivo]),
             }),
           };

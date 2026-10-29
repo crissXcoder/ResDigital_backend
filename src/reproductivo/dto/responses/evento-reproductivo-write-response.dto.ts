@@ -38,6 +38,8 @@ export class EventoDiagnosticoWriteResponseDto {
 }
 
 export class EventoPartoWriteResponseDto {
+  @ApiProperty({ type: 'string', format: 'uuid', nullable: true }) criaAnteriorId: string | null;
+  @ApiProperty({ enum: ['CONSERVAR', 'DESVINCULAR'], nullable: true }) accionFiliacionAnterior: string | null;
   @ApiProperty({ format: 'uuid' }) eventoId: string;
   @ApiProperty({ type: 'string', format: 'uuid', nullable: true }) eventoServicioId: string | null;
   @ApiProperty({ type: 'string', format: 'uuid', nullable: true }) criaAnimalId: string | null;

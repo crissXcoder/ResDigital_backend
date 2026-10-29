@@ -21,6 +21,7 @@ export interface TratamientoResponseDto {
   usuarioId: string;
   eventoCorrigeId: string | null;
   fechaRegistro: Date;
+  produccionesCorregidas?: import('../../produccion/reconcile-production-disposition.js').ProduccionCorregida[];
 }
 
 export interface AnimalEnRetiroDto {

@@ -15,6 +15,14 @@ const ev = (
 });
 
 describe('derivarLactancia', () => {
+  it('la baja y el retorno no restauran una lactancia anterior, incluso al corregir la baja', () => {
+    const eventos = [ev('i', 'INICIO_LACTANCIA', '2026-10-01'), ev('b', 'BAJA', '2026-10-20'), ev('r', 'REACTIVACION', '2026-10-22')];
+    expect(derivarLactancia(eventos, '2026-10-19').enLactancia).toBe(true);
+    expect(derivarLactancia(eventos, '2026-10-21').enLactancia).toBe(false);
+    expect(derivarLactancia(eventos, '2026-10-22').enLactancia).toBe(false);
+    eventos[1].revertido = true;
+    expect(derivarLactancia(eventos, '2026-10-22').enLactancia).toBe(false);
+  });
   it('un parto abre la lactancia', () => {
     expect(derivarLactancia([ev('p1', 'PARTO', '2026-08-01')], '2026-09-01')).toEqual({
       enLactancia: true,

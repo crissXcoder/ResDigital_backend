@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { In, type EntityManager } from 'typeorm';
 import { Animal } from '../animales/entities/animal.entity.js';
+import { lockAnimalsForWrite } from '../animales/animal-write-lock.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoParto } from '../reproductivo/entities/evento-parto.entity.js';
 import { ReproductiveStateService } from '../reproductivo/services/reproductive-state.service.js';
@@ -30,10 +31,9 @@ export function esHembra(animal: Pick<Animal, 'sexo'>): boolean {
 export async function bloquearAnimalProduccion(
   manager: EntityManager,
   animalId: string,
+  tenantId: string,
 ): Promise<void> {
-  await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0));', [
-    `produccion-animal:${animalId}`,
-  ]);
+  await lockAnimalsForWrite(manager, tenantId, [animalId]);
 }
 
 export async function buscarAnimal(
@@ -163,7 +163,7 @@ export class LactanciaService {
     manager: EntityManager,
   ): Promise<EventoLactanciaResponseDto> {
     return manager.transaction(async (trx) => {
-      await bloquearAnimalProduccion(trx, animalId);
+      await bloquearAnimalProduccion(trx, animalId, tenantId);
       const animal = await buscarAnimal(trx, tenantId, animalId);
       if (animal.activo === false) {
         throw new BadRequestException(
@@ -194,7 +194,7 @@ export class LactanciaService {
     manager: EntityManager,
   ): Promise<EventoLactanciaResponseDto> {
     return manager.transaction(async (trx) => {
-      await bloquearAnimalProduccion(trx, animalId);
+      await bloquearAnimalProduccion(trx, animalId, tenantId);
       const animal = await buscarAnimal(trx, tenantId, animalId);
       if (animal.activo === false) {
         throw new BadRequestException(

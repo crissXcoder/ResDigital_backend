@@ -6,10 +6,12 @@ import {
   Body,
   Param,
   Query,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { EntityManager } from 'typeorm';
 import { AnimalesService } from './animales.service.js';
+import { ReproductiveStateService } from '../reproductivo/services/reproductive-state.service.js';
 import { CurrentEntityManager } from '../auth/decorators/current-entity-manager.decorator.js';
 import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
@@ -17,6 +19,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { CreateAnimalDto } from './dto/create-animal.dto.js';
 import { UpdateAnimalDto } from './dto/update-animal.dto.js';
 import { BajaAnimalDto } from './dto/baja-animal.dto.js';
+import { ReactivarAnimalDto } from './dto/reactivar-animal.dto.js';
 import { CreateDocumentoDto } from './dto/create-documento.dto.js';
 import { QueryAnimalDto } from './dto/query-animal.dto.js';
 import { DocumentoAnimalResponseDto } from './dto/documento-animal-response.dto.js';
@@ -32,15 +35,17 @@ import { ComposicionGeneticaResponseDto } from './dto/composicion-genetica.dto.j
 @ApiBearerAuth()
 @Controller('animales')
 export class AnimalesController {
-  constructor(private readonly animalesService: AnimalesService) {}
+  constructor(private readonly animalesService: AnimalesService, private readonly reproductiveState: ReproductiveStateService) {}
 
   @Get()
-  findAll(
+  async findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: QueryAnimalDto,
     @CurrentEntityManager() manager: EntityManager,
   ) {
-    return this.animalesService.findAll(user.tenantId, query, manager);
+    const animales = await this.animalesService.findAll(user.tenantId, query, manager);
+    const estados = await this.reproductiveState.calcularEstadosBatch(animales.filter((animal) => animal.sexo?.toLowerCase() === 'hembra'), user.tenantId, manager);
+    return animales.map((animal) => ({ ...animal, estadoReproductivo: estados.get(animal.id)?.estadoActual ?? null }));
   }
 
   @Get(':id')
@@ -118,6 +123,12 @@ export class AnimalesController {
     return this.animalesService.getBajaByAnimal(id, user.tenantId, manager);
   }
 
+  @Get(':id/historial-bajas')
+  @ApiOperation({ summary: 'Consultar episodios de baja y retorno sin perder historia' })
+  getHistorialBajas(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthenticatedUser, @CurrentEntityManager() manager: EntityManager) {
+    return this.animalesService.getHistorialBajas(id, user.tenantId, manager);
+  }
+
   @Post(':id/reactivar')
   @Roles('propietario', 'administrador')
   @ApiOperation({ summary: 'Reactivar un animal dado de baja si su arete interno está libre' })
@@ -125,11 +136,12 @@ export class AnimalesController {
   @ApiResponse({ status: 404, description: 'Animal no encontrado en esta finca' })
   @ApiResponse({ status: 409, description: 'El animal ya está activo o su arete interno está en uso por otro animal activo' })
   reactivar(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReactivarAnimalDto,
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
   ) {
-    return this.animalesService.reactivar(id, user.tenantId, manager);
+    return this.animalesService.reactivar(id, user.tenantId, user.userId, dto, manager);
   }
 
   @Get(':id/documentos')
