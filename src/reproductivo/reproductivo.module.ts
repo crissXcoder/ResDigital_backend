@@ -7,11 +7,10 @@ import { EventoParto } from './entities/evento-parto.entity.js';
 import { EventoSecado } from './entities/evento-secado.entity.js';
 import { Animal } from '../animales/entities/animal.entity.js';
 import { AnimalesModule } from '../animales/animales.module.js';
-import { ReproductiveCalculationService } from './services/reproductive-calculation.service.js';
-import { ReproductiveStateService } from './services/reproductive-state.service.js';
 import { ReproductiveService } from './services/reproductive.service.js';
 import { ReproductiveController } from './reproductive.controller.js';
 import { AuthModule } from '../auth/auth.module.js';
+import { ReproductiveStateModule } from './reproductive-state.module.js';
 
 @Module({
   imports: [
@@ -24,17 +23,15 @@ import { AuthModule } from '../auth/auth.module.js';
       Animal,
     ]),
     AuthModule,
+    ReproductiveStateModule,
     AnimalesModule,
   ],
   controllers: [ReproductiveController],
   providers: [
-    ReproductiveCalculationService,
-    ReproductiveStateService,
     ReproductiveService,
   ],
   exports: [
-    ReproductiveCalculationService,
-    ReproductiveStateService,
+    ReproductiveStateModule,
     ReproductiveService,
   ],
 })

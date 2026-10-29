@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EntityManager } from 'typeorm';
 import { AnimalesService } from '../animales.service.js';
 import { Animal } from '../entities/animal.entity.js';
+import { CatalogoRaza } from '../../catalogos/entities/catalogo-raza.entity.js';
+import { Potrero } from '../../potreros/entities/potrero.entity.js';
 import { ConflictException, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Evento } from '../../eventos/entities/evento.entity.js';
 import { EventoBaja } from '../entities/evento-baja.entity.js';
+import { EventoReactivacion } from '../entities/evento-reactivacion.entity.js';
+import { UpdateAnimalDto } from '../dto/update-animal.dto.js';
 import { DocumentoAnimal } from '../entities/documento-animal.entity.js';
 import { AnimalDocumentStorageService } from '../animal-document-storage.service.js';
 import { runAfterRollbackCallbacks } from '../../auth/interceptors/rls-transaction.interceptor.js';
@@ -40,6 +44,7 @@ describe('AnimalesService - findAll y Búsqueda Global (DASH-T002)', () => {
       save: vi.fn(),
       merge: vi.fn(),
       query: vi.fn().mockResolvedValue([]),
+      transaction: vi.fn((callback: (trx: unknown) => unknown) => callback(mockEntityManager)),
       queryRunner: { isTransactionActive: true, data: {} },
     } as unknown as EntityManager;
   });
@@ -320,6 +325,7 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
     } as any);
 
     mockEntityManager = {
+      query: vi.fn().mockResolvedValue([]),
       findOne: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockImplementation((_entity, data) => ({ ...data, id: 'nuevo-id' })),
       save: vi.fn().mockImplementation((data) => Promise.resolve(data)),
@@ -468,7 +474,7 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
     expect(mockEntityManager.save).toHaveBeenCalled();
   });
 
-  it('en update: rechaza con ConflictException si se cambia el DIIO a uno que ya pertenece a otro animal', async () => {
+  it('en update: rechaza sustituir un DIIO oficial ya asignado, aunque el nuevo número esté libre', async () => {
     const animalActual = {
       id: 'mi-animal-uuid',
       tenantId: TENANT_A,
@@ -480,9 +486,6 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
       if (options?.where?.id === 'mi-animal-uuid') {
         return animalActual;
       }
-      if (options?.where?.numeroOficialDiio === 'CR-99999') {
-        return { id: 'otro-animal-uuid' } as Animal;
-      }
       return null;
     });
 
@@ -492,9 +495,28 @@ describe('AnimalesService - Unicidad y Normalización DIIO (HATO-T002)', () => {
 
     await expect(
       service.update('mi-animal-uuid', TENANT_A, dto, mockEntityManager),
-    ).rejects.toThrowError(
-      'Ya existe un animal registrado con el número oficial DIIO "CR-99999" en esta finca.',
-    );
+    ).rejects.toThrowError('El DIIO oficial asignado no se puede cambiar ni retirar.');
+    expect(mockEntityManager.save).not.toHaveBeenCalled();
+  });
+
+  it('en update: rechaza retirar un DIIO oficial ya asignado', async () => {
+    const animalActual = {
+      id: 'mi-animal-uuid',
+      tenantId: TENANT_A,
+      areteInterno: 'A005',
+      numeroOficialDiio: 'CR-55555',
+    } as Animal;
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalActual);
+
+    await expect(
+      service.update(
+        'mi-animal-uuid',
+        TENANT_A,
+        { numeroOficialDiio: null } as unknown as UpdateAnimalDto,
+        mockEntityManager,
+      ),
+    ).rejects.toThrowError('El DIIO oficial asignado no se puede cambiar ni retirar.');
+    expect(mockEntityManager.save).not.toHaveBeenCalled();
   });
 
   it('permite registrar el mismo DIIO en fincas (tenants) diferentes', async () => {
@@ -543,6 +565,7 @@ describe('AnimalesService - Validaciones Genealógicas (HATO-T003)', () => {
     } as any);
 
     mockEntityManager = {
+      query: vi.fn().mockResolvedValue([]),
       findOne: vi.fn(),
       find: vi.fn(),
       create: vi.fn().mockImplementation((_entity, data) => ({ ...data, id: 'nuevo-id' })),
@@ -799,6 +822,7 @@ describe('AnimalesService - Validaciones de Cronología (HATO-T004)', () => {
       removeObject: vi.fn().mockResolvedValue(undefined),
     } as any);
     mockEntityManager = {
+      query: vi.fn().mockResolvedValue([]),
       findOne: vi.fn(),
       find: vi.fn(),
       create: vi.fn((_entity, val) => val),
@@ -1005,8 +1029,11 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
     };
 
     mockEntityManager = {
+      query: vi.fn().mockResolvedValue([]),
       findOne: vi.fn(),
-      save: vi.fn((val) => Promise.resolve(val)),
+      save: vi.fn((entity, val) => Promise.resolve(val ?? entity)),
+      create: vi.fn((_target, val) => ({ ...val, id: val?.id ?? 'evt-uuid-react' })),
+      transaction: vi.fn((callback: (trx: unknown) => unknown) => callback(mockEntityManager)),
       getRepository: vi.fn((entity: any) => {
         if (entity === Evento) return mockRepoEvento;
         if (entity === EventoBaja) return mockRepoEventoBaja;
@@ -1254,13 +1281,10 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
       tipoBaja: 'Venta',
     } as Animal;
 
-    vi.mocked(mockEntityManager.findOne)
-      .mockResolvedValueOnce(animalInactivo)
-      .mockResolvedValueOnce(null);
+    const baja = { eventoId: 'baja-1', tipoBaja: 'Venta Comercial', evento: { id: 'baja-1', fechaEvento: '2026-03-01', revertido: false } } as EventoBaja;
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalInactivo).mockResolvedValueOnce(baja).mockResolvedValueOnce(null);
 
-    vi.mocked(mockEntityManager.save).mockImplementation(async (a: any) => a);
-
-    const res = await service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager);
+    const res = await service.reactivar('animal-inactivo-uuid', TENANT_A, 'user-1', { modalidad: 'RETORNO', eventoBajaId: 'baja-1', fechaEvento: '2026-03-02', motivo: 'Retorno de compra fallida' }, mockEntityManager);
     expect(res.activo).toBe(true);
     expect(res.fechaBaja).toBeNull();
     expect(res.tipoBaja).toBeNull();
@@ -1278,7 +1302,7 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
     vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalActivo);
 
     await expect(
-      service.reactivar('animal-activo-uuid', TENANT_A, mockEntityManager),
+      service.reactivar('animal-activo-uuid', TENANT_A, 'user-1', { modalidad: 'RETORNO', eventoBajaId: 'baja-1', fechaEvento: '2026-03-02', motivo: 'duplicado' }, mockEntityManager),
     ).rejects.toThrowError('El animal ya se encuentra activo en el hato.');
   });
 
@@ -1299,13 +1323,35 @@ describe('AnimalesService - Baja como Evento Histórico (HATO-T005)', () => {
       activo: true,
     } as Animal;
 
-    vi.mocked(mockEntityManager.findOne)
-      .mockResolvedValueOnce(animalInactivo)
-      .mockResolvedValueOnce(otroActivo);
+    const baja = { eventoId: 'baja-1', tipoBaja: 'Venta Comercial', evento: { id: 'baja-1', fechaEvento: '2026-03-01', revertido: false } } as EventoBaja;
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animalInactivo).mockResolvedValueOnce(baja).mockResolvedValueOnce(otroActivo);
 
     await expect(
-      service.reactivar('animal-inactivo-uuid', TENANT_A, mockEntityManager),
-    ).rejects.toThrowError(/el arete interno "1002" está actualmente en uso por otro animal activo/);
+      service.reactivar('animal-inactivo-uuid', TENANT_A, 'user-1', { modalidad: 'RETORNO', eventoBajaId: 'baja-1', fechaEvento: '2026-03-02', motivo: 'Retorno' }, mockEntityManager),
+    ).rejects.toThrowError(/arete interno está en uso/);
+  });
+
+  it('reactivar: fallecimiento solo admite corrección de baja', async () => {
+    const animal = { id: 'animal-inactivo-uuid', tenantId: TENANT_A, activo: false } as Animal;
+    const baja = { eventoId: 'baja-muerte', tipoBaja: 'Fallecimiento', evento: { id: 'baja-muerte', fechaEvento: '2026-03-01', revertido: false } } as EventoBaja;
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animal).mockResolvedValueOnce(baja);
+    await expect(service.reactivar('animal-inactivo-uuid', TENANT_A, 'user-1', {
+      modalidad: 'RETORNO', eventoBajaId: 'baja-muerte', fechaEvento: '2026-03-02', motivo: 'Retorno',
+    }, mockEntityManager)).rejects.toThrowError(/no admite retorno/i);
+  });
+
+  it('reactivar: corrección revierte el evento de baja y conserva la decisión', async () => {
+    const animal = { id: 'animal-inactivo-uuid', tenantId: TENANT_A, areteInterno: '1002', activo: false } as Animal;
+    const baja = { eventoId: 'baja-1', tipoBaja: 'Fallecimiento', evento: { id: 'baja-1', fechaEvento: '2026-03-01', revertido: false } } as EventoBaja;
+    vi.mocked(mockEntityManager.findOne).mockResolvedValueOnce(animal).mockResolvedValueOnce(baja).mockResolvedValueOnce(null);
+    const result = await service.reactivar('animal-inactivo-uuid', TENANT_A, 'user-1', {
+      modalidad: 'CORRECCION', eventoBajaId: 'baja-1', fechaEvento: '2026-03-02', motivo: 'Registro de fallecimiento equivocado',
+    }, mockEntityManager);
+    expect(result.activo).toBe(true);
+    expect(mockEntityManager.save).toHaveBeenCalledWith(Evento, expect.objectContaining({ id: 'baja-1', revertido: true }));
+    expect(mockEntityManager.save).toHaveBeenCalledWith(EventoReactivacion, expect.objectContaining({
+      eventoBajaId: 'baja-1', modalidad: 'CORRECCION', areteAnterior: '1002', areteNuevo: '1002',
+    }));
   });
 });
 
@@ -1323,6 +1369,7 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
     id: MADRE_ID,
     tenantId: TENANT_A,
     sexo: 'Hembra',
+    activo: true,
     razaId: 'raza-jersey',
     razaOtra: null,
     potreroId: 'potrero-maternidad',
@@ -1510,6 +1557,7 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
         id: CRIA_ID,
         tenantId: TENANT_A,
         madreId: null,
+        fechaNacimiento: '2026-05-10',
       } as Animal;
 
       vi.mocked(mockEntityManager.findOne)
@@ -1541,6 +1589,7 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
         id: CRIA_ID,
         tenantId: TENANT_A,
         madreId: MADRE_ID,
+        fechaNacimiento: '2026-05-10',
       } as Animal;
 
       vi.mocked(mockEntityManager.findOne)
@@ -1621,7 +1670,9 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
     it('rechaza si fecha de nacimiento es futura', async () => {
       vi.mocked(mockEntityManager.findOne)
         .mockResolvedValueOnce(madreBase)
-        .mockResolvedValueOnce(null);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'raza-jersey' } as CatalogoRaza)
+        .mockResolvedValueOnce({ id: 'potrero-maternidad' } as Potrero);
 
       await expect(
         service.crearOValidarCriaParaParto(
@@ -1642,7 +1693,9 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
     it('rechaza si peso de nacimiento es negativo', async () => {
       vi.mocked(mockEntityManager.findOne)
         .mockResolvedValueOnce(madreBase)
-        .mockResolvedValueOnce(null);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'raza-jersey' } as CatalogoRaza)
+        .mockResolvedValueOnce({ id: 'potrero-maternidad' } as Potrero);
 
       await expect(
         service.crearOValidarCriaParaParto(
@@ -1685,7 +1738,9 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
     it('crea exitosamente nueva cría heredando razaId, potreroId de la madre y categoría Ternera si sexo es Hembra', async () => {
       vi.mocked(mockEntityManager.findOne)
         .mockResolvedValueOnce(madreBase)
-        .mockResolvedValueOnce(null);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'raza-jersey' } as CatalogoRaza)
+        .mockResolvedValueOnce({ id: 'potrero-maternidad' } as Potrero);
 
       const res = await service.crearOValidarCriaParaParto(
         TENANT_A,
@@ -1725,7 +1780,9 @@ describe('AnimalesService - crearOValidarCriaParaParto (RF-004: Contrato Animal/
     it('crea cría macho con categoría Ternero y usa fecha actual si no se provee fecha de parto', async () => {
       vi.mocked(mockEntityManager.findOne)
         .mockResolvedValueOnce(madreBase)
-        .mockResolvedValueOnce(null);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'raza-jersey' } as CatalogoRaza)
+        .mockResolvedValueOnce({ id: 'potrero-maternidad' } as Potrero);
 
       const res = await service.crearOValidarCriaParaParto(
         TENANT_A,

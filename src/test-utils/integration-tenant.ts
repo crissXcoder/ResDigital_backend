@@ -171,6 +171,8 @@ const DETALLES_REPRODUCTIVOS = [
   'evento_diagnostico',
   'evento_parto',
   'evento_secado',
+  'evento_reactivacion',
+  'evento_baja',
 ];
 
 const TABLAS_CON_TENANT = [

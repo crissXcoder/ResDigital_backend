@@ -13,13 +13,24 @@ import { Animal } from '../animales/entities/animal.entity.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
 import { EventoProduccionLeche } from './entities/evento-produccion-leche.entity.js';
-import { CreateProduccionLecheDto } from './dto/produccion-leche.dto.js';
+import { CreateProduccionLecheDto, FilaImportarProduccionLecheDto } from './dto/produccion-leche.dto.js';
 import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
 
 const TENANT = 'tenant-1';
 const USER = 'user-1';
 const ANIMAL_ID = '00000000-0000-4000-8000-000000000010';
 const hoy = todayIsoDate();
+
+it('el DTO de lote conserva el prefijo del arete interno', async () => {
+  const pipe = new ValidationPipe({ transform: true });
+  for (const areteInterno of ['#101', '101', '00101']) {
+    const fila = await pipe.transform(
+      { areteInterno, fecha: hoy, turno: 'MANANA', litros: 10 },
+      { type: 'body', metatype: FilaImportarProduccionLecheDto },
+    ) as FilaImportarProduccionLecheDto;
+    expect(fila.areteInterno).toBe(areteInterno);
+  }
+});
 
 describe('resolverDisposicion', () => {
   const t = (eventoId: string, fechaAplicacion: string, fechaLiberacionLeche: string) => ({
@@ -193,8 +204,8 @@ describe('ProduccionLecheService', () => {
         Evento,
         expect.objectContaining({ tipo: 'PRODUCCION_LECHE', fechaEvento: hoy, usuarioId: USER }),
       );
-      expect(query).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), [
-        `produccion-animal:${ANIMAL_ID}`,
+      expect(query).toHaveBeenCalledWith(expect.stringContaining('ORDER BY id FOR UPDATE'), [
+        TENANT, [ANIMAL_ID],
       ]);
     });
 
@@ -324,7 +335,7 @@ describe('ProduccionLecheService', () => {
   });
 
   describe('update', () => {
-    it('actualiza los litros de un registro activo', async () => {
+    it('versiona los litros de un registro activo y conserva el original', async () => {
       const evento = { id: 'p1', animalId: ANIMAL_ID, fechaEvento: hoy, revertido: false, notas: 'prev' } as Evento;
       const detalle = { eventoId: 'p1', turno: 'MANANA', litros: 8, disposicion: 'COMERCIALIZABLE', tratamientoEventoId: null } as EventoProduccionLeche;
       findOne.mockImplementation(async (cls: unknown) => {
@@ -332,11 +343,12 @@ describe('ProduccionLecheService', () => {
         if (cls === EventoProduccionLeche) return detalle;
         return null;
       });
-      const actualizado = await service.update(TENANT, 'p1', { litros: 11.5, notas: 'corregido' }, manager);
+      const actualizado = await service.update(TENANT, USER, 'p1', { litros: 11.5, notas: 'corregido', motivo: 'Digitación incorrecta' }, manager);
       expect(actualizado.litros).toBe(11.5);
-      expect(detalle.litros).toBe(11.5);
-      expect(evento.notas).toBe('corregido');
-      expect(save).toHaveBeenCalledWith(EventoProduccionLeche, detalle);
+      expect(detalle.litros).toBe(8);
+      expect(evento.revertido).toBe(true);
+      expect(actualizado.eventoCorrigeId).toBe('p1');
+      expect(save).toHaveBeenCalledWith(EventoProduccionLeche, expect.objectContaining({ litros: 11.5 }));
     });
 
     it('rechaza actualizar un registro revertido', async () => {
@@ -346,7 +358,7 @@ describe('ProduccionLecheService', () => {
         return null;
       });
       await expect(
-        service.update(TENANT, 'p1', { litros: 10 }, manager),
+        service.update(TENANT, USER, 'p1', { litros: 10 }, manager),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });

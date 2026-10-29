@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
+import { validationMessagesEs } from './common/validation-messages.js';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -29,7 +31,14 @@ function origenesPermitidos(): string[] {
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
+  app.enableCors({
+    origin: origenesPermitidos(),
+    credentials: true,
+  });
+
   const keyGenerator = createRateLimitKey(app.get(SupabaseJwtService));
 
   // Cabeceras de seguridad: CSP, HSTS, X-Content-Type-Options, X-Frame-Options.
@@ -69,10 +78,18 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  app.enableCors({
-    origin: origenesPermitidos(),
-    credentials: true,
+  app.useBodyParser('json', {
+    limit: '100kb',
+    type: (request) =>
+      !(request.method === 'POST' && request.url?.split('?')[0] === '/produccion-leche/lote'),
   });
+  app.useBodyParser('json', {
+    limit: '9mb',
+    type: (request) =>
+      request.method === 'POST' && request.url?.split('?')[0] === '/produccion-leche/lote',
+  });
+  app.useBodyParser('urlencoded', { extended: true, limit: '100kb' });
+
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -80,6 +97,7 @@ async function bootstrap(): Promise<void> {
       forbidNonWhitelisted: true,
       transform: true,
       transformOptions: { enableImplicitConversion: false },
+      exceptionFactory: (errors) => new BadRequestException(validationMessagesEs(errors)),
     }),
   );
 
@@ -109,7 +127,7 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
-  await app.listen(port);
+  await app.listen(port, process.env.HOST ?? '::');
 
   new Logger('Bootstrap').log(
     `ResDigital API escuchando en el puerto ${port}${swaggerHabilitado ? ' (Swagger en /api)' : ''}`,

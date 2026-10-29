@@ -1,8 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:net';
 
 // Sólo aprovisiona un contenedor propio enlazado a loopback. No carga .env.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,6 +39,91 @@ function run(args, env, quiet = false) {
       'Falló la etapa: ' + args.filter((arg) => !arg.includes('://')).join(' '),
     );
   return quiet ? result.stdout || '' : '';
+}
+async function verifyHttpTransport(env) {
+  const probe = createServer();
+  await new Promise((resolveListen, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolveListen);
+  });
+  const address = probe.address();
+  if (!address || typeof address === 'string') throw new Error('No se pudo reservar un puerto de prueba.');
+  const port = address.port;
+  await new Promise((resolveClose, reject) =>
+    probe.close((error) => (error ? reject(error) : resolveClose())),
+  );
+
+  const server = spawn(process.execPath, [resolve(root, 'dist/main.js')], {
+    cwd: root,
+    env: { ...env, HOST: '127.0.0.1', PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let serverOutput = '';
+  for (const stream of [server.stdout, server.stderr]) {
+    stream.setEncoding('utf8');
+    stream.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(-6000); });
+  }
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const startupStarted = Date.now();
+  try {
+    let ready = false;
+    let lastConnectionError;
+    // El arranque en frío de Nest en Windows puede superar diez segundos.
+    while (Date.now() - startupStarted < 60_000) {
+      if (server.exitCode !== null) throw new Error(`El servidor HTTP local terminó antes de escuchar (código ${server.exitCode}): ${serverOutput}`);
+      try {
+        const response = await fetch(`${baseUrl}/animales`, { signal: AbortSignal.timeout(2000) });
+        if (response.status === 401) {
+          ready = true;
+          break;
+        }
+      } catch (error) {
+        lastConnectionError = error;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    }
+    if (!ready) throw new Error(`El servidor HTTP local no quedó disponible: ${serverOutput}`, { cause: lastConnectionError });
+    console.log(`Arranque HTTP medido: ${Date.now() - startupStarted} ms; autenticación anónima 401 confirmada.`);
+
+    const largeLot = await fetch(`${baseUrl}/produccion-leche/lote`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filas: [], marcador: 'x'.repeat(220 * 1024) }),
+    });
+    if (largeLot.status !== 401) throw new Error(`El body de lote de 220 KiB respondió ${largeLot.status}, se esperaba 401 por auth.`);
+
+    const tooLarge = await fetch(`${baseUrl}/produccion-leche/lote`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ marcador: 'x'.repeat(9 * 1024 * 1024) }),
+    });
+    if (tooLarge.status !== 413) throw new Error(`El body excedido respondió ${tooLarge.status}, se esperaba 413.`);
+
+    const generalTooLarge = await fetch(`${baseUrl}/animales`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ marcador: 'x'.repeat(220 * 1024) }),
+    });
+    if (generalTooLarge.status !== 413) throw new Error(`El límite general respondió ${generalTooLarge.status}, se esperaba 413.`);
+    const origin = 'http://localhost:3000';
+    let limited;
+    for (let attempt = 0; attempt < 11; attempt++) {
+      limited = await fetch(`${baseUrl}/auth/perfil`, { headers: { Origin: origin } });
+    }
+    if (limited.status !== 429 || limited.headers.get('access-control-allow-origin') !== origin || !limited.headers.get('retry-after')) {
+      throw new Error('La respuesta 429 debe conservar CORS y Retry-After sin omitir el límite.');
+    }
+    const foreignOrigin = await fetch(`${baseUrl}/auth/perfil`, { headers: { Origin: 'https://foreign.invalid' } });
+    if (foreignOrigin.headers.get('access-control-allow-origin')) throw new Error('CORS no debe autorizar un origen ajeno.');
+    console.log('HTTP 429 confirmado con CORS para origen permitido, Retry-After y rechazo de origen ajeno.');
+    console.log('Transporte HTTP local confirmado: lote 220 KiB -> 401; exceso de lote y ruta general -> 413.');
+  } finally {
+    if (server.exitCode === null) {
+      const exited = once(server, 'exit');
+      server.kill();
+      await exited;
+    }
+  }
 }
 try {
   docker([
@@ -182,13 +269,6 @@ try {
       appliedMigrations.length +
       ' migraciones aplicadas; cero pendientes.',
   );
-  run(
-    [
-      resolve(root, 'tooling/export-openapi.mjs'),
-      '--sync-frontend',
-    ],
-    { ...env, DATABASE_URL: appUrl },
-  );
   const seed = spawnSync(
     'docker',
     [
@@ -218,6 +298,7 @@ try {
     DATABASE_URL: appUrl,
     TEST_ADMIN_DATABASE_URL: adminUrl,
   };
+  await verifyHttpTransport(testEnv);
   run(
     [
       resolve(root, 'node_modules/vitest/vitest.mjs'),

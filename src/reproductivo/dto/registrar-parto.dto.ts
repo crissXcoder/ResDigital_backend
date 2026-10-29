@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsBoolean,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -44,6 +45,13 @@ export class RegistrarPartoDto {
   criaAnimalId?: string;
 
   @ApiPropertyOptional({
+    description: 'Confirma que una ficha sin fecha de nacimiento corresponde a esta cría; se registrará la fecha del parto.',
+  })
+  @IsBoolean({ message: 'La confirmación de fecha de nacimiento debe ser booleana.' })
+  @IsOptional()
+  confirmarFechaNacimiento?: boolean;
+
+  @ApiPropertyOptional({
     description:
       'Datos para dar de alta la cría en la misma transacción del parto. Mutuamente excluyente con criaAnimalId.',
     type: DatosNuevaCriaPartoDto,
@@ -82,4 +90,9 @@ export class RegistrarPartoDto {
   @IsUUID('4', { message: 'El eventoCorrigeId debe ser un UUID válido' })
   @IsOptional()
   eventoCorrigeId?: string;
+
+  @ApiPropertyOptional({ enum: ['CONSERVAR', 'DESVINCULAR'] })
+  @IsIn(['CONSERVAR', 'DESVINCULAR'])
+  @IsOptional()
+  accionFiliacionAnterior?: 'CONSERVAR' | 'DESVINCULAR';
 }

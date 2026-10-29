@@ -30,11 +30,13 @@ import {
 } from './retiro-calc.js';
 import { validarCompatibilidadSexo } from './compatibilidad-sexo.js';
 import { validarDocumentoTratamiento } from './documento-tratamiento.js';
+import { reconcileProductionDisposition } from '../produccion/reconcile-production-disposition.js';
 
 export interface AnulacionResponse {
   id: string;
   eventoAnulacionId: string;
   motivo: string;
+  produccionesCorregidas: import('../produccion/reconcile-production-disposition.js').ProduccionCorregida[];
 }
 
 @Injectable()
@@ -51,9 +53,13 @@ export class TratamientosService {
         `El animal con ID '${dto.animalId}' está dado de baja; su historial sanitario permanece disponible, pero no admite tratamientos nuevos.`,
       );
     }
-    return manager.transaction((trx) =>
-      this.crearEvento(trx, tenantId, usuarioId, animal, dto, null),
-    );
+    return manager.transaction(async (trx) => {
+      const animalBloqueado = await this.lockAnimal(tenantId, animal.id, trx);
+      if (animalBloqueado.activo === false) throw new ConflictException('No se puede registrar tratamiento en un animal dado de baja.');
+      const tratamiento = await this.crearEvento(trx, tenantId, usuarioId, animalBloqueado, dto, null);
+      tratamiento.produccionesCorregidas = await reconcileProductionDisposition(trx, tenantId, animal.id, usuarioId, `tratamiento ${tratamiento.id}`);
+      return tratamiento;
+    });
   }
 
   async findAllByAnimal(
@@ -155,11 +161,14 @@ export class TratamientosService {
     manager: EntityManager,
   ): Promise<TratamientoResponseDto> {
     return manager.transaction(async (trx) => {
+      const referencia = await trx.findOne(Evento, { where: { id, tenantId, tipo: 'TRATAMIENTO' } });
+      if (!referencia) throw new NotFoundException(`Tratamiento con ID '${id}' no encontrado.`);
+      await this.lockAnimal(tenantId, referencia.animalId, trx);
       const { evento: original, detalle } = await this.bloquearVigente(trx, tenantId, id);
       const animal = await this.assertAnimal(tenantId, original.animalId, trx);
       original.revertido = true;
       await trx.save(Evento, original);
-      return this.crearEvento(
+      const tratamiento = await this.crearEvento(
         trx,
         tenantId,
         usuarioId,
@@ -168,6 +177,8 @@ export class TratamientosService {
         original.id,
         detalle.documentoUrl,
       );
+      tratamiento.produccionesCorregidas = await reconcileProductionDisposition(trx, tenantId, animal.id, usuarioId, `corrección de tratamiento ${original.id}`);
+      return tratamiento;
     });
   }
 
@@ -179,6 +190,9 @@ export class TratamientosService {
     manager: EntityManager,
   ): Promise<AnulacionResponse> {
     return manager.transaction(async (trx) => {
+      const referencia = await trx.findOne(Evento, { where: { id, tenantId, tipo: 'TRATAMIENTO' } });
+      if (!referencia) throw new NotFoundException(`Tratamiento con ID '${id}' no encontrado.`);
+      await this.lockAnimal(tenantId, referencia.animalId, trx);
       const { evento: original } = await this.bloquearVigente(trx, tenantId, id);
       original.revertido = true;
       await trx.save(Evento, original);
@@ -195,10 +209,12 @@ export class TratamientosService {
           notas: dto.motivo,
         }),
       );
+      const produccionesCorregidas = await reconcileProductionDisposition(trx, tenantId, original.animalId, usuarioId, `anulación de tratamiento ${original.id}`);
       return {
         id: original.id,
         eventoAnulacionId: anulacion.id,
         motivo: dto.motivo,
+        produccionesCorregidas,
       };
     });
   }
@@ -383,6 +399,12 @@ export class TratamientosService {
         `Animal con ID '${animalId}' no encontrado en esta finca.`,
       );
     }
+    return animal;
+  }
+
+  private async lockAnimal(tenantId: string, animalId: string, trx: EntityManager): Promise<Animal> {
+    const animal = await trx.findOne(Animal, { where: { id: animalId, tenantId }, lock: { mode: 'pessimistic_write' } });
+    if (!animal) throw new NotFoundException(`Animal con ID '${animalId}' no encontrado en esta finca.`);
     return animal;
   }
 }

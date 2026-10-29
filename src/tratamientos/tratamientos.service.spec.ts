@@ -10,6 +10,7 @@ import { TratamientosService } from './tratamientos.service.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { Animal } from '../animales/entities/animal.entity.js';
 import { Medicamento } from '../sanitary/entities/medicamento.entity.js';
+import { Padecimiento } from '../sanitary/entities/padecimiento.entity.js';
 import { EventoTratamiento } from './entities/evento-tratamiento.entity.js';
 import { CreateTratamientoDto } from './dto/create-tratamiento.dto.js';
 import { AnularTratamientoDto } from './dto/anular-tratamiento.dto.js';
@@ -311,6 +312,14 @@ describe('TratamientosService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventoSeq = 0;
+    findOne.mockImplementation(async (cls: unknown, options?: { where?: { id?: string } }) => {
+      if (cls === Animal) return animal;
+      if (cls === Medicamento) return { id: options?.where?.id ?? 'med-1', nombreComercial: 'Producto', viaAdministracion: null };
+      if (cls === Padecimiento) return { id: options?.where?.id ?? 'pad-1', nombre: 'Diagnóstico', categoria: null };
+      if (cls === EventoTratamiento) return detalleVigente('orig-1', '2026-09-22', '2026-09-21');
+      return null;
+    });
+    find.mockResolvedValue([]);
     save.mockImplementation(async (cls: unknown, entity: object) =>
       cls === Evento && !(entity as { id?: string }).id
         ? { id: `ev-${++eventoSeq}`, ...entity }
@@ -379,6 +388,7 @@ describe('TratamientosService', () => {
     it('con medicamentoId guarda la FK y el nombre del catálogo', async () => {
       findOne
         .mockResolvedValueOnce(animal)
+        .mockResolvedValueOnce(animal)
         .mockResolvedValueOnce({ id: MED_ID, nombreComercial: 'Oxitetraciclina LA' });
 
       await service.create(
@@ -445,7 +455,7 @@ describe('TratamientosService', () => {
     });
 
     it('a un macho no se le puede registrar mastitis en texto libre (400)', async () => {
-      findOne.mockResolvedValueOnce(toro);
+      findOne.mockResolvedValueOnce(toro).mockResolvedValueOnce(toro);
       await expect(
         service.create(
           TENANT_ID,
@@ -459,6 +469,7 @@ describe('TratamientosService', () => {
 
     it('a un macho no se le puede registrar un padecimiento de categoría Reproductivo (400)', async () => {
       findOne
+        .mockResolvedValueOnce(toro)
         .mockResolvedValueOnce(toro)
         .mockResolvedValueOnce({ id: PAD_ID, nombre: 'Retención placentaria', categoria: 'Reproductivo' });
       const { diagnostico: _omitido, ...sinDiagnostico } = datos;
@@ -476,6 +487,7 @@ describe('TratamientosService', () => {
     it('a un macho no se le puede aplicar un medicamento intramamario (400)', async () => {
       findOne
         .mockResolvedValueOnce(toro)
+        .mockResolvedValueOnce(toro)
         .mockResolvedValueOnce({ id: MED_ID, nombreComercial: 'Cefalexina', viaAdministracion: 'Intramamaria' });
       await expect(
         service.create(
@@ -488,7 +500,7 @@ describe('TratamientosService', () => {
     });
 
     it('a un macho sí se le registra un padecimiento de ambos sexos', async () => {
-      findOne.mockResolvedValueOnce(toro);
+      findOne.mockResolvedValueOnce(toro).mockResolvedValueOnce(toro);
       await service.create(
         TENANT_ID,
         USER_ID,
@@ -551,8 +563,9 @@ describe('TratamientosService', () => {
     it('al corregir conserva la URL heredada del original', async () => {
       findOne
         .mockResolvedValueOnce({ id: 'orig-1', tenantId: TENANT_ID, animalId: ANIMAL_ID, tipo: 'TRATAMIENTO', revertido: false })
-        .mockResolvedValueOnce({ eventoId: 'orig-1', documentoUrl: publica })
-        .mockResolvedValueOnce(animal);
+        .mockResolvedValueOnce(animal)
+        .mockResolvedValueOnce({ id: 'orig-1', tenantId: TENANT_ID, animalId: ANIMAL_ID, tipo: 'TRATAMIENTO', revertido: false })
+        .mockResolvedValueOnce({ eventoId: 'orig-1', documentoUrl: publica });
       const result = await service.corregir(
         TENANT_ID,
         USER_ID,
@@ -685,8 +698,9 @@ describe('TratamientosService', () => {
       const orig = original();
       findOne
         .mockResolvedValueOnce(orig)
-        .mockResolvedValueOnce({ eventoId: 'orig-1' })
-        .mockResolvedValueOnce(animal);
+        .mockResolvedValueOnce(animal)
+        .mockResolvedValueOnce(orig)
+        .mockResolvedValueOnce({ eventoId: 'orig-1' });
 
       const result = await service.corregir(
         TENANT_ID,
@@ -696,7 +710,7 @@ describe('TratamientosService', () => {
         manager,
       );
 
-      expect(findOne).toHaveBeenNthCalledWith(1, Evento, {
+      expect(findOne).toHaveBeenNthCalledWith(3, Evento, {
         where: { id: 'orig-1', tenantId: TENANT_ID, tipo: 'TRATAMIENTO' },
         lock: { mode: 'pessimistic_write' },
       });
@@ -718,6 +732,8 @@ describe('TratamientosService', () => {
     it('corregir un tratamiento ya revertido responde 409 sin crear eventos', async () => {
       findOne
         .mockResolvedValueOnce({ ...original(), revertido: true })
+        .mockResolvedValueOnce(animal)
+        .mockResolvedValueOnce({ ...original(), revertido: true })
         .mockResolvedValueOnce({ eventoId: 'orig-1' });
 
       await expect(
@@ -736,8 +752,9 @@ describe('TratamientosService', () => {
     it('la corrección es atómica: si falla el evento nuevo, la transacción aborta', async () => {
       findOne
         .mockResolvedValueOnce(original())
-        .mockResolvedValueOnce({ eventoId: 'orig-1' })
-        .mockResolvedValueOnce(animal);
+        .mockResolvedValueOnce(animal)
+        .mockResolvedValueOnce(original())
+        .mockResolvedValueOnce({ eventoId: 'orig-1' });
       save
         .mockImplementationOnce(async (_cls: unknown, e: object) => e)
         .mockRejectedValueOnce(new Error('fallo de base'));
@@ -751,7 +768,7 @@ describe('TratamientosService', () => {
     });
 
     it('anular revierte el original y registra un evento con motivo y usuario', async () => {
-      findOne.mockResolvedValueOnce(original()).mockResolvedValueOnce({ eventoId: 'orig-1' });
+      findOne.mockResolvedValueOnce(original()).mockResolvedValueOnce(animal).mockResolvedValueOnce(original()).mockResolvedValueOnce({ eventoId: 'orig-1' });
 
       const result = await service.anular(
         TENANT_ID,
@@ -779,6 +796,7 @@ describe('TratamientosService', () => {
         id: 'orig-1',
         eventoAnulacionId: 'ev-1',
         motivo: 'registrado al animal equivocado',
+        produccionesCorregidas: [],
       });
     });
 

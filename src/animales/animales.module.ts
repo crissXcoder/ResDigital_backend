@@ -8,9 +8,11 @@ import { AnimalDocumentStorageService } from './animal-document-storage.service.
 
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoBaja } from './entities/evento-baja.entity.js';
+import { EventoReactivacion } from './entities/evento-reactivacion.entity.js';
+import { ReproductiveStateModule } from '../reproductivo/reproductive-state.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Animal, DocumentoAnimal, Evento, EventoBaja])],
+  imports: [TypeOrmModule.forFeature([Animal, DocumentoAnimal, Evento, EventoBaja, EventoReactivacion]), ReproductiveStateModule],
   controllers: [AnimalesController],
   providers: [AnimalesService, AnimalDocumentStorageService],
   exports: [TypeOrmModule, AnimalesService],

@@ -111,7 +111,7 @@ export class ProduccionLecheController {
     @CurrentUser() user: AuthenticatedUser,
     @CurrentEntityManager() manager: EntityManager,
   ) {
-    return this.produccionService.update(user.tenantId, id, dto, manager);
+    return this.produccionService.update(user.tenantId, user.userId, id, dto, manager);
   }
 
   @Post(':id/anulacion')

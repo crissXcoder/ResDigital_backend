@@ -3,6 +3,9 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../database/data-source.js';
 import { Animal } from '../animales/entities/animal.entity.js';
+import { AnimalesService } from '../animales/animales.service.js';
+import { EventoBaja } from '../animales/entities/evento-baja.entity.js';
+import { EventoReactivacion } from '../animales/entities/evento-reactivacion.entity.js';
 import { CatalogoRaza } from '../catalogos/entities/catalogo-raza.entity.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { Potrero } from '../potreros/entities/potrero.entity.js';
@@ -48,6 +51,7 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
 
   let animalAId: string;
   let tratamientoAId: string;
+  let razaId: string;
 
   async function comoTenant(tenantId: string, userId: string): Promise<QueryRunner> {
     const qr = dataSource.createQueryRunner();
@@ -82,6 +86,8 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
         EventoDiagnostico,
         EventoParto,
         EventoSecado,
+        EventoBaja,
+        EventoReactivacion,
         EventoTratamiento,
         EventoProduccionLeche,
         Medicamento,
@@ -98,6 +104,8 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
       EventoDiagnostico,
       EventoParto,
       EventoSecado,
+      EventoBaja,
+      EventoReactivacion,
       EventoTratamiento,
       EventoProduccionLeche,
       Medicamento,
@@ -110,6 +118,7 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
 
     const raza = await adminSource.getRepository(CatalogoRaza).findOne({ where: {} });
     if (!raza) throw new Error('Se requiere al menos una raza en catalogo_raza.');
+    razaId = raza.id;
 
     const animalRepo = adminSource.getRepository(Animal);
     const animalA = await animalRepo.save({
@@ -160,6 +169,38 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
     if (dataSource?.isInitialized) await dataSource.destroy();
   });
 
+  it('SQL runtime rechaza un evento con animal de otra finca', async () => {
+    const qr = await comoTenant(tenantB, userTenantB);
+    try {
+      await expect(qr.query(
+        `INSERT INTO evento (tenant_id, animal_id, tipo, fecha_evento, usuario_id)
+         VALUES ($1, $2, 'PESAJE', $3, $4)`,
+        [tenantB, animalAId, hoy, userTenantB],
+      )).rejects.toMatchObject({ code: '23503' });
+    } finally {
+      await cerrar(qr, false);
+    }
+  });
+
+  it('SQL runtime rechaza filiación de otra finca en el detalle de parto', async () => {
+    const qr = await comoTenant(tenantA, userTenantA);
+    try {
+      const animalB = await adminSource.getRepository(Animal).findOneByOrFail({ tenantId: tenantB, areteInterno: ARETE_B });
+      const eventos = await qr.query(
+        `INSERT INTO evento (tenant_id, animal_id, tipo, fecha_evento, usuario_id)
+         VALUES ($1, $2, 'PARTO', $3, $4) RETURNING id`,
+        [tenantA, animalAId, hoy, userTenantA],
+      ) as Array<{ id: string }>;
+      await expect(qr.query(
+        `INSERT INTO evento_parto (evento_id, cria_anterior_id, accion_filiacion_anterior)
+         VALUES ($1, $2, 'CONSERVAR')`,
+        [eventos[0]!.id, animalB.id],
+      )).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await cerrar(qr, false);
+    }
+  });
+
   it('evento_produccion_leche tiene RLS forzado y política EXISTS heredada de evento', async () => {
     const [flags] = await dataSource.query(
       `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'evento_produccion_leche'`,
@@ -171,6 +212,57 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
     );
     expect(policies).toHaveLength(1);
     expect(policies[0].qual).toContain('tenant_id');
+  });
+
+  it('retorno bajo resdigital_app cierra la baja como vigente, preserva historial y no cruza tenant', async () => {
+    const animal: Animal = await adminSource.getRepository(Animal).save({
+      tenantId: tenantA, areteInterno: 'TEST-RETURN-A', nombre: 'Retorno A',
+      sexo: 'Hembra', razaId,
+      categoria: 'Vaca', activo: true,
+    });
+    const bajaRunner = await comoTenant(tenantA, userTenantA);
+    let bajaId: string;
+    try {
+      const evento = await bajaRunner.manager.save(Evento, bajaRunner.manager.create(Evento, {
+        tenantId: tenantA, animalId: animal.id, tipo: 'BAJA', fechaEvento: hace(1),
+        usuarioId: userTenantA, revertido: false, eventoCorrigeId: null, notas: 'Retorno de prueba',
+      }));
+      bajaId = evento.id;
+      await bajaRunner.manager.save(EventoBaja, bajaRunner.manager.create(EventoBaja, {
+        eventoId: evento.id, tipoBaja: 'Venta Comercial', motivo: 'Retorno de prueba',
+        precioVentaCrc: null, pesoFinalKg: null,
+      }));
+      animal.activo = false;
+      animal.fechaBaja = hace(1);
+      animal.tipoBaja = 'Venta Comercial';
+      await bajaRunner.manager.save(Animal, animal);
+      await cerrar(bajaRunner, true);
+    } catch (error) {
+      await cerrar(bajaRunner, false);
+      throw error;
+    }
+    const retornoRunner = await comoTenant(tenantA, userTenantA);
+    try {
+      const animales = new AnimalesService({} as never);
+      const reactivado = await animales.reactivar(animal.id, tenantA, userTenantA, {
+        modalidad: 'RETORNO', eventoBajaId: bajaId!, fechaEvento: hoy, motivo: 'El comprador devolvió el animal',
+      }, retornoRunner.manager);
+      expect(reactivado).toMatchObject({ id: animal.id, activo: true, fechaBaja: null, tipoBaja: null, potreroId: null });
+      const detalle = await retornoRunner.query('SELECT modalidad, evento_baja_id FROM evento_reactivacion WHERE evento_baja_id = $1', [bajaId]);
+      expect(detalle).toEqual([{ modalidad: 'RETORNO', evento_baja_id: bajaId }]);
+      const [bajaOriginal] = await retornoRunner.query('SELECT revertido FROM evento WHERE id = $1', [bajaId]);
+      expect(bajaOriginal?.revertido).toBe(false);
+      await cerrar(retornoRunner, true);
+    } catch (error) {
+      await cerrar(retornoRunner, false);
+      throw error;
+    }
+    const otroTenant = await comoTenant(tenantB, userTenantB);
+    try {
+      expect(await otroTenant.query('SELECT evento_id FROM evento_reactivacion WHERE evento_baja_id = $1', [bajaId])).toEqual([]);
+    } finally {
+      await cerrar(otroTenant, false);
+    }
   });
 
   it('bajo retiro guarda descarte con el tratamiento y antes del retiro comercializable', async () => {
@@ -212,6 +304,38 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
     }
   });
 
+  it('el rol de aplicación no puede liberar ni sustituir un DIIO asignado por SQL', async () => {
+    const qr = await comoTenant(tenantA, userTenantA);
+    try {
+      await qr.query(
+        'UPDATE animal SET numero_oficial_diio = $1 WHERE id = $2',
+        ['TEST-DIIO-OFICIAL', animalAId],
+      );
+
+      await qr.query('SAVEPOINT limpiar_diio');
+      await expect(
+        qr.query('UPDATE animal SET numero_oficial_diio = NULL WHERE id = $1', [animalAId]),
+      ).rejects.toMatchObject({ driverError: { code: '23514' } });
+      await qr.query('ROLLBACK TO SAVEPOINT limpiar_diio');
+
+      await qr.query('SAVEPOINT cambiar_diio');
+      await expect(
+        qr.query('UPDATE animal SET numero_oficial_diio = $1 WHERE id = $2', [
+          'TEST-DIIO-SUSTITUTO',
+          animalAId,
+        ]),
+      ).rejects.toMatchObject({ driverError: { code: '23514' } });
+      await qr.query('ROLLBACK TO SAVEPOINT cambiar_diio');
+
+      await qr.query('SAVEPOINT borrar_animal');
+      await expect(qr.query('DELETE FROM animal WHERE id = $1', [animalAId]))
+        .rejects.toMatchObject({ driverError: { code: '42501' } });
+      await qr.query('ROLLBACK TO SAVEPOINT borrar_animal');
+    } finally {
+      await cerrar(qr, false);
+    }
+  });
+
   it('la base rechaza un descarte sin tratamiento de origen', async () => {
     const qr = await comoTenant(tenantA, userTenantA);
     try {
@@ -237,6 +361,23 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
     try {
       const dto = { animalId: animalAId, fecha: hace(3), turno: 'MANANA' as const, litros: 10 };
       const original = await produccion.create(tenantA, userTenantA, dto, qr.manager);
+
+      await qr.query('SAVEPOINT duplicado_sql');
+      const [eventoDuplicado] = await qr.query(
+        `INSERT INTO evento (tenant_id, animal_id, tipo, fecha_evento, usuario_id)
+         VALUES ($1, $2, 'PRODUCCION_LECHE', $3, $4) RETURNING id`,
+        [tenantA, animalAId, dto.fecha, userTenantA],
+      );
+      await expect(
+        qr.query(
+          `INSERT INTO evento_produccion_leche (evento_id, turno, litros, disposicion)
+           VALUES ($1, 'MANANA', 8, 'COMERCIALIZABLE')`,
+          [eventoDuplicado.id],
+        ),
+      ).rejects.toThrow();
+      await qr.query('ROLLBACK TO SAVEPOINT duplicado_sql');
+      await qr.query('RELEASE SAVEPOINT duplicado_sql');
+
       await expect(
         produccion.create(tenantA, userTenantA, dto, qr.manager),
       ).rejects.toBeInstanceOf(ConflictException);

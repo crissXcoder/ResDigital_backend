@@ -47,6 +47,12 @@ export class EventoParto {
   @Column({ name: 'cria_animal_id', type: 'uuid', nullable: true })
   criaAnimalId: string | null;
 
+  @Column({ name: 'cria_anterior_id', type: 'uuid', nullable: true })
+  criaAnteriorId?: string | null;
+
+  @Column({ name: 'accion_filiacion_anterior', type: 'text', nullable: true })
+  accionFiliacionAnterior?: 'CONSERVAR' | 'DESVINCULAR' | null;
+
   @ManyToOne(() => Animal, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'cria_animal_id' })
   criaAnimal: Animal | null;

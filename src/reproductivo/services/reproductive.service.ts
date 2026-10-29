@@ -1,10 +1,12 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
+import { lockAnimalsForWrite } from '../../animales/animal-write-lock.js';
 import { Animal } from '../../animales/entities/animal.entity.js';
 import { Evento, type TipoEvento } from '../../eventos/entities/evento.entity.js';
 import { EventoServicio } from '../entities/evento-servicio.entity.js';
@@ -130,7 +132,8 @@ export class ReproductiveService {
     // posterior dejaba el evento original revertido y sin reemplazo: la vaca
     // perdía su ciclo.
     return manager.transaction(async (trx) => {
-      await this.lockAnimalForReproductiveWrite(animalId, trx);
+      await lockAnimalsForWrite(trx, tenantId, [animalId]);
+      await this.obtenerHembra(animalId, tenantId, trx, 'eventos reproductivos');
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
@@ -216,7 +219,8 @@ export class ReproductiveService {
     );
 
     return manager.transaction(async (trx) => {
-      await this.lockAnimalForReproductiveWrite(animalId, trx);
+      await lockAnimalsForWrite(trx, tenantId, [animalId]);
+      await this.obtenerHembra(animalId, tenantId, trx, 'eventos reproductivos');
       // Leer la referencia dentro del mismo bloqueo serializado que las escrituras.
       const servicioEvento = await trx.findOne(Evento, {
         where: {
@@ -346,7 +350,19 @@ export class ReproductiveService {
     }
 
     return manager.transaction(async (trx) => {
-      await this.lockAnimalForReproductiveWrite(animalId, trx);
+      const partoAnterior = dto.eventoCorrigeId
+        ? await trx.findOne(EventoParto, { where: { eventoId: dto.eventoCorrigeId } })
+        : null;
+      await lockAnimalsForWrite(trx, tenantId, [animalId, ...(dto.criaAnimalId ? [dto.criaAnimalId] : []), ...(partoAnterior?.criaAnimalId ? [partoAnterior.criaAnimalId] : [])]);
+      await this.obtenerHembra(animalId, tenantId, trx, 'partos');
+      if (partoAnterior?.criaAnimalId && dto.accionFiliacionAnterior === 'DESVINCULAR' && dto.criaAnimalId === partoAnterior.criaAnimalId) throw new BadRequestException('No se puede desvincular y volver a vincular la misma cría en una corrección.');
+      if (partoAnterior?.criaAnimalId && !dto.accionFiliacionAnterior) {
+        throw new BadRequestException('Indicá cómo reconciliar la filiación de la cría anterior.');
+      }
+      if (partoAnterior?.criaAnimalId) {
+        const anterior = await trx.findOne(Animal, { where: { id: partoAnterior.criaAnimalId, tenantId } });
+        if (!anterior || anterior.madreId !== animalId) throw new ConflictException('La filiación cambió desde el parto original; no se modificó.');
+      }
       // El orden importa: primero se revierte el evento que esta corrección
       // reemplaza, y recién después se calcula el estado. Si se calculara antes,
       // una corrección chocaría contra el propio estado que viene a corregir.
@@ -391,16 +407,27 @@ export class ReproductiveService {
         );
       }
 
-      const cria = await this.animalesService.crearOValidarCriaParaParto(
-        tenantId,
-        animalId,
-        {
-          criaAnimalId: dto.criaAnimalId,
-          nuevaCria: dto.nuevaCria,
-        },
-        dto.fechaEvento,
-        trx,
-      );
+      const cria = dto.criaAnimalId || dto.nuevaCria
+        ? await this.animalesService.crearOValidarCriaParaParto(
+            tenantId,
+            animalId,
+            {
+              criaAnimalId: dto.criaAnimalId,
+              confirmarFechaNacimiento: dto.confirmarFechaNacimiento,
+              nuevaCria: dto.nuevaCria,
+            },
+            dto.fechaEvento,
+            trx,
+          )
+        : null;
+      if (partoAnterior?.criaAnimalId && dto.accionFiliacionAnterior === 'DESVINCULAR') {
+        const criaAnterior = await trx.findOne(Animal, { where: { id: partoAnterior.criaAnimalId, tenantId } });
+        if (!criaAnterior || criaAnterior.madreId !== animalId) {
+          throw new ConflictException('La filiación cambió desde el parto original; no se modificó.');
+        }
+        criaAnterior.madreId = null;
+        await trx.save(Animal, criaAnterior);
+      }
 
       const evento = await trx.save(
         Evento,
@@ -417,27 +444,14 @@ export class ReproductiveService {
       );
 
       // RF-004: Alta o vinculación de cría dentro de la misma transacción atómica
-      let criaAnimalId: string | null = null;
-      if (dto.criaAnimalId || dto.nuevaCria) {
-        const cria = await this.animalesService.crearOValidarCriaParaParto(
-          tenantId,
-          animalId,
-          {
-            criaAnimalId: dto.criaAnimalId,
-            nuevaCria: dto.nuevaCria,
-          },
-          dto.fechaEvento,
-          trx,
-        );
-        criaAnimalId = cria ? cria.id : null;
-      }
-
       const parto = await trx.save(
         EventoParto,
         trx.create(EventoParto, {
           eventoId: evento.id,
           eventoServicioId: dto.eventoServicioId ?? null,
           criaAnimalId: cria?.id ?? null,
+          criaAnteriorId: partoAnterior?.criaAnimalId ?? null,
+          accionFiliacionAnterior: partoAnterior?.criaAnimalId ? dto.accionFiliacionAnterior : null,
           facilidadParto: dto.facilidadParto ?? null,
           observaciones: dto.observaciones ?? null,
         }),
@@ -461,7 +475,8 @@ export class ReproductiveService {
     await this.obtenerHembra(animalId, tenantId, manager, 'periodo de secado');
 
     return manager.transaction(async (trx) => {
-      await this.lockAnimalForReproductiveWrite(animalId, trx);
+      await lockAnimalsForWrite(trx, tenantId, [animalId]);
+      await this.obtenerHembra(animalId, tenantId, trx, 'eventos reproductivos');
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
@@ -618,17 +633,8 @@ export class ReproductiveService {
         `El animal con arete '${animal.areteInterno}' es de sexo '${animal.sexo}' y no registra ${accion}.`,
       );
     }
+    if (animal.activo === false) throw new ConflictException('El animal está dado de baja.');
     return animal;
-  }
-
-  private async lockAnimalForReproductiveWrite(
-    animalId: string,
-    manager: EntityManager,
-  ): Promise<void> {
-    await manager.query(
-      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0));',
-      [`reproductive-animal:${animalId}`],
-    );
   }
 
   private validarCronologia(

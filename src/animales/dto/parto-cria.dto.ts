@@ -8,6 +8,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SEXOS, CATEGORIAS_ANIMAL } from './create-animal.dto.js';
@@ -80,13 +81,12 @@ export class DatosNuevaCriaPartoDto {
   @IsOptional()
   nombre?: string;
 
-  @ApiPropertyOptional({
-    description: "Sexo de la cría recién nacida ('Hembra' o 'Macho'). Por defecto: 'Hembra'.",
+  @ApiProperty({
+    description: "Sexo obligatorio de la cría recién nacida ('Hembra' o 'Macho').",
     enum: SEXOS,
     example: 'Hembra',
   })
   @IsIn(SEXOS, { message: "El sexo de la cría debe ser 'Hembra' o 'Macho'" })
-  @IsOptional()
   sexo?: (typeof SEXOS)[number];
 
   @ApiPropertyOptional({
@@ -204,6 +204,13 @@ export class PartoCriaContratoDto {
   @IsUUID('4', { message: 'El criaAnimalId debe ser un UUID válido' })
   @IsOptional()
   criaAnimalId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Confirma que una ficha sin fecha de nacimiento corresponde a esta cría; se registrará la fecha del parto.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  confirmarFechaNacimiento?: boolean;
 
   @ApiPropertyOptional({
     description:
