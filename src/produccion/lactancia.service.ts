@@ -10,6 +10,7 @@ import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoParto } from '../reproductivo/entities/evento-parto.entity.js';
 import { ReproductiveStateService } from '../reproductivo/services/reproductive-state.service.js';
 import { todayIsoDate } from '../tratamientos/retiro-calc.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 import {
   TIPOS_LACTANCIA,
   derivarLactancia,
@@ -210,7 +211,7 @@ export class LactanciaService {
       }
       if (dto.fecha < actual.fechaInicio) {
         throw new BadRequestException(
-          `La fecha de fin (${dto.fecha}) no puede ser anterior al inicio de la lactancia (${actual.fechaInicio}).`,
+          `La fecha de fin (${formatearFechaLegible(dto.fecha)}) no puede ser anterior al inicio de la lactancia (${formatearFechaLegible(actual.fechaInicio)}).`,
         );
       }
       const reproductivo = await this.reproductiveState.calcularEstado(
@@ -231,7 +232,7 @@ export class LactanciaService {
     const hoy = todayIsoDate();
     if (fecha > hoy) {
       throw new BadRequestException(
-        `La fecha (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+        `La fecha (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
       );
     }
   }
