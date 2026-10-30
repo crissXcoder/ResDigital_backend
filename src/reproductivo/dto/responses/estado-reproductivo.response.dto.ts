@@ -138,7 +138,7 @@ export class EstadoReproductivoResponseDto {
   @ApiProperty({
     example: true,
     description:
-      'False si la hembra aún no cumple 15 meses o es Ternera. Sin fecha de nacimiento ni categoría no se afirma lo contrario.',
+      'False si la hembra aún no cumple 15 meses o su categoría es Ternera. Sin fecha de nacimiento ni categoría no se afirma lo contrario.',
   })
   aptoParaPreniez: boolean;
 
