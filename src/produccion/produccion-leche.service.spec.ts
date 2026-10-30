@@ -172,7 +172,12 @@ describe('ProduccionLecheService', () => {
     tratamientos = [];
     original = null;
     detalleOriginal = null;
-    estadoDe.mockResolvedValue({ enLactancia: true, fechaInicio: '2026-01-01', eventoInicioId: 'p1' });
+    estadoDe.mockResolvedValue({
+      enLactancia: true,
+      fechaInicio: '2026-01-01',
+      eventoInicioId: 'p1',
+      tienePartoPrevio: true,
+    });
     findOne.mockImplementation(async (cls: unknown) => {
       if (cls === Animal) return animal;
       if (cls === EventoProduccionLeche) return duplicado ?? detalleOriginal;
@@ -253,9 +258,27 @@ describe('ProduccionLecheService', () => {
     });
 
     it('rechaza una vaca seca o novilla (no lactante)', async () => {
-      estadoDe.mockResolvedValue({ enLactancia: false, fechaInicio: null, eventoInicioId: null });
+      estadoDe.mockResolvedValue({
+        enLactancia: false,
+        fechaInicio: null,
+        eventoInicioId: null,
+        tienePartoPrevio: true,
+      });
       await expect(service.create(TENANT, USER, dto(), manager)).rejects.toThrow(
         /no está en lactancia/,
+      );
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('rechaza ordeñar si nunca ha parido, aunque tenga lactancia manual', async () => {
+      estadoDe.mockResolvedValue({
+        enLactancia: true,
+        fechaInicio: '2026-01-01',
+        eventoInicioId: 'i1',
+        tienePartoPrevio: false,
+      });
+      await expect(service.create(TENANT, USER, dto(), manager)).rejects.toThrow(
+        /primer parto/,
       );
       expect(save).not.toHaveBeenCalled();
     });
@@ -516,12 +539,31 @@ describe('ProduccionLecheService', () => {
       ).rejects.toThrow(/es macho/);
     });
 
+    it('falla si la hembra nunca ha parido', async () => {
+      findOne.mockImplementation(async (cls: unknown) => {
+        if (cls === Animal) return { id: 'vaca-1', areteInterno: 'V-1', sexo: 'Hembra', tenantId: TENANT };
+        return null;
+      });
+      estadoDe.mockResolvedValueOnce({ enLactancia: true, tienePartoPrevio: false });
+
+      await expect(
+        service.importarLote(
+          TENANT,
+          USER,
+          {
+            filas: [{ fecha: hoy, turno: 'Mañana', areteInterno: 'V-1', litros: 10 }] as any,
+          },
+          manager,
+        ),
+      ).rejects.toThrow(/primer parto/);
+    });
+
     it('falla si la hembra no está en lactancia', async () => {
       findOne.mockImplementation(async (cls: unknown) => {
         if (cls === Animal) return { id: 'vaca-1', areteInterno: 'V-1', sexo: 'Hembra', tenantId: TENANT };
         return null;
       });
-      estadoDe.mockResolvedValueOnce({ enLactancia: false });
+      estadoDe.mockResolvedValueOnce({ enLactancia: false, tienePartoPrevio: true });
 
       await expect(
         service.importarLote(

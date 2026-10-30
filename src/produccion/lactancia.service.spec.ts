@@ -135,6 +135,7 @@ describe('LactanciaService', () => {
       ];
       eventos = [
         evento('p1', 'v1', 'PARTO', hace(30)),
+        evento('p2', 'v2', 'PARTO', hace(40)),
         evento('i2', 'v2', 'INICIO_LACTANCIA', hace(5)),
         evento('p3', 'seca', 'PARTO', hace(300)),
         evento('s3', 'seca', 'SECADO', hace(20)),
@@ -155,8 +156,18 @@ describe('LactanciaService', () => {
       expect(save).not.toHaveBeenCalled();
     });
 
-    it('registra el inicio para una vaca sin parto', async () => {
+    it('rechaza iniciar lactancia si nunca ha parido', async () => {
       animales = [animal('v1')];
+      await expect(
+        service.registrarInicio(TENANT, USER, 'v1', { fecha: hace(3) }, manager),
+      ).rejects.toThrow(/parto o aborto previo/);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it('registra el inicio tras un aborto', async () => {
+      animales = [animal('v1')];
+      eventos = [evento('p1', 'v1', 'PARTO', hace(10))];
+      partos = [{ eventoId: 'p1', facilidadParto: 'Aborto' }];
       const r = await service.registrarInicio(TENANT, USER, 'v1', { fecha: hace(3) }, manager);
       expect(r).toMatchObject({ tipo: 'INICIO_LACTANCIA', fecha: hace(3), usuarioId: USER });
       expect(save).toHaveBeenCalledWith(

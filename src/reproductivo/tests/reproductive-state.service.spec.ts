@@ -18,6 +18,8 @@ describe('ReproductiveStateService (Máquina de Estados al Vuelo)', () => {
     id: 'vaca-uuid-1',
     areteInterno: '104',
     sexo: 'Hembra',
+    categoria: 'Vaca',
+    fechaNacimiento: null as string | null,
     raza: { nombre: 'Holstein', diasGestacion: 281 },
   };
 
@@ -25,6 +27,8 @@ describe('ReproductiveStateService (Máquina de Estados al Vuelo)', () => {
     id: 'toro-uuid-1',
     areteInterno: '001',
     sexo: 'Macho',
+    categoria: 'Toro',
+    fechaNacimiento: null as string | null,
     raza: { nombre: 'Brahman', diasGestacion: 293 },
   };
 
@@ -41,6 +45,35 @@ describe('ReproductiveStateService (Máquina de Estados al Vuelo)', () => {
     const estado = service.derivarEstadoDesdeEventos(mockVaca, []);
     expect(estado.estadoActual).toBe('Vacía');
     expect(estado.servicioActivo).toBeUndefined();
+    expect(estado.aptoParaPreniez).toBe(true);
+  });
+
+  it('1b. Hembra menor de 15 meses no está apta para preñez y avisa', () => {
+    const estado = service.derivarEstadoDesdeEventos(
+      { ...mockVaca, fechaNacimiento: '2026-10-21' },
+      [],
+      '2026-10-22',
+    );
+    expect(estado.aptoParaPreniez).toBe(false);
+    expect(estado.advertencias?.some((aviso) => /15 meses/i.test(aviso))).toBe(
+      true,
+    );
+  });
+
+  it('1c. Ternera no está apta para preñez aunque ya tenga 15 meses', () => {
+    const estado = service.derivarEstadoDesdeEventos(
+      {
+        ...mockVaca,
+        categoria: 'Ternera',
+        fechaNacimiento: '2024-01-01',
+      },
+      [],
+      '2026-10-22',
+    );
+    expect(estado.aptoParaPreniez).toBe(false);
+    expect(estado.advertencias?.some((aviso) => /Ternera/i.test(aviso))).toBe(
+      true,
+    );
   });
 
   it('2. Validación de sexo: Animal macho arroja BadRequestException y no posee ciclo', () => {

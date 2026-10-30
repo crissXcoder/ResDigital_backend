@@ -149,6 +149,74 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       expect(mockEntityManager.save).toHaveBeenCalledTimes(2); // Evento y EventoServicio
     });
 
+    it('debe rechazar servicio si la hembra tiene menos de 15 meses a la fecha del evento', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue({
+        ...mockVacaA,
+        fechaNacimiento: '2026-10-21',
+      } as Animal);
+
+      const dto = {
+        fechaEvento: '2026-10-22',
+        tipoServicio: 'Inseminación Artificial' as const,
+        toroOPajilla: 'Titan-01',
+      };
+
+      await expect(
+        service.registrarServicio(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          dto,
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(/15 meses/i);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('debe rechazar servicio si la hembra está en categoría Ternera', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue({
+        ...mockVacaA,
+        categoria: 'Ternera',
+      } as Animal);
+
+      await expect(
+        service.registrarServicio(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-03-01',
+            tipoServicio: 'Inseminación Artificial' as const,
+            toroOPajilla: 'Titan-01',
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(/Ternera/i);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('debe aceptar servicio el día en que cumple 15 meses', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue({
+        ...mockVacaA,
+        fechaNacimiento: '2025-07-22',
+      } as Animal);
+
+      const dto = {
+        fechaEvento: '2026-10-22',
+        tipoServicio: 'Inseminación Artificial' as const,
+        toroOPajilla: 'Titan-01',
+      };
+
+      const result = await service.registrarServicio(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        dto,
+        mockEntityManager,
+      );
+      expect(result.evento.tipo).toBe('SERVICIO');
+    });
+
     it('debe rechazar con BadRequestException (400) si el animal es macho', async () => {
       vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(
         mockToroA as Animal,
@@ -334,6 +402,60 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       expect(result.evento.tipo).toBe('DIAGNOSTICO');
       expect(result.diagnostico.resultado).toBe('Preñada');
       expect(result.diagnostico.metodo).toBe('Palpación');
+    });
+
+    it('debe rechazar diagnóstico Preñada si la hembra tiene menos de 15 meses', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue({
+        ...mockVacaA,
+        fechaNacimiento: '2026-10-21',
+      } as Animal);
+
+      await expect(
+        service.registrarDiagnostico(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-10-22',
+            eventoServicioId: 'servicio-evento-id',
+            metodo: 'Palpación',
+            resultado: 'Preñada',
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(/15 meses/i);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('debe rechazar un diagnóstico antes de 35 días post-servicio', async () => {
+      const servicio = {
+        id: 'servicio-evento-id',
+        animalId: mockVacaA.id,
+        tenantId: tenantA,
+        tipo: 'SERVICIO',
+        revertido: false,
+        fechaEvento: '2026-03-01',
+      } as Evento;
+      vi.spyOn(mockEntityManager, 'findOne').mockImplementation(
+        async (entityClass: unknown) =>
+          entityClass === Animal ? (mockVacaA as Animal) : servicio,
+      );
+
+      await expect(
+        service.registrarDiagnostico(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          {
+            fechaEvento: '2026-03-10',
+            eventoServicioId: servicio.id,
+            metodo: 'Palpación',
+            resultado: 'Preñada',
+          },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(/35 días/i);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
     });
 
     it('debe rechazar con NotFoundException (404) si el servicio previo no existe o no pertenece al animal', async () => {
@@ -640,6 +762,35 @@ describe('ReproductiveService (Orquestador de Dominio Reproductivo)', () => {
       );
 
       expect(result.evento.tipo).toBe('PARTO');
+    });
+
+    it('rechaza un parto viable demasiado temprano para la gestación de la raza', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      estadoPrenada();
+      await expect(
+        service.registrarParto(
+          mockVacaA.id!,
+          tenantA,
+          userId,
+          { fechaEvento: '2026-04-01', facilidadParto: 'Normal' },
+          mockEntityManager,
+        ),
+      ).rejects.toThrow(/demasiado temprano/i);
+      expect(mockEntityManager.save).not.toHaveBeenCalled();
+    });
+
+    it('acepta un aborto antes del 60 % de la gestación', async () => {
+      vi.spyOn(mockEntityManager, 'findOne').mockResolvedValue(mockVacaA as Animal);
+      estadoPrenada();
+      const result = await service.registrarParto(
+        mockVacaA.id!,
+        tenantA,
+        userId,
+        { fechaEvento: '2026-04-01', facilidadParto: 'Aborto' },
+        mockEntityManager,
+      );
+      expect(result.evento.tipo).toBe('PARTO');
+      expect(result.parto.facilidadParto).toBe('Aborto');
     });
 
     it('rechaza parto anterior al diagnóstico positivo activo', async () => {

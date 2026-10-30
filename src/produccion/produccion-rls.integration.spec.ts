@@ -142,7 +142,17 @@ describe('Integración RLS — MOD-06 Producción de leche (base real)', () => {
     });
 
     const qr = await comoTenant(tenantA, userTenantA);
-    await lactancia.registrarInicio(tenantA, userTenantA, animalAId, { fecha: hace(20) }, qr.manager);
+    await qr.manager.save(
+      Evento,
+      qr.manager.create(Evento, {
+        tenantId: tenantA,
+        animalId: animalAId,
+        tipo: 'PARTO',
+        fechaEvento: hace(20),
+        usuarioId: userTenantA,
+        revertido: false,
+      }),
+    );
     const tratamiento = await tratamientos.create(
       tenantA,
       userTenantA,

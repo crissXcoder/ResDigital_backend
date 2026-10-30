@@ -12,6 +12,7 @@ export class SupabaseJwtService implements OnModuleInit {
   private readonly logger = new Logger(SupabaseJwtService.name);
   private jwks!: JWTVerifyGetKey;
   private jwksUrl!: string;
+  private issuer!: string;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -29,6 +30,7 @@ export class SupabaseJwtService implements OnModuleInit {
     // Limpiar barra diagonal final si existe
     const normalizedUrl = supabaseUrl.replace(/\/+$/, '');
     this.jwksUrl = `${normalizedUrl}/auth/v1/.well-known/jwks.json`;
+    this.issuer = `${normalizedUrl}/auth/v1`;
 
     // createRemoteJWKSet de jose maneja caché interna, enfriamiento y rotación automática de llaves
     this.jwks = createRemoteJWKSet(new URL(this.jwksUrl));
@@ -38,12 +40,15 @@ export class SupabaseJwtService implements OnModuleInit {
 
   /**
    * Verifica la validez y firma del token contra el JWKS de Supabase.
-   * Restringido estrictamente al algoritmo asimétrico ES256.
+   * Restringido estrictamente al algoritmo asimétrico ES256, al emisor
+   * del proyecto y a la audiencia `authenticated`.
    */
   async verifyToken(token: string): Promise<JWTPayload> {
     try {
       const { payload } = await jwtVerify(token, this.jwks, {
         algorithms: ['ES256'],
+        issuer: this.issuer,
+        audience: 'authenticated',
       });
       return payload;
     } catch (error) {

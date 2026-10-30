@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { AppModule } from './app.module.js';
+import { isSwaggerEnabled } from './config/swagger.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { createRateLimitKey } from './auth/rate-limit-key.js';
 import { SupabaseJwtService } from './auth/services/supabase-jwt.service.js';
@@ -107,9 +108,7 @@ async function bootstrap(): Promise<void> {
 
   // Swagger publica la superficie completa de la API. Fuera de desarrollo se
   // activa solo a propósito.
-  const swaggerHabilitado =
-    process.env.SWAGGER_ENABLED === 'true' ||
-    process.env.NODE_ENV !== 'production';
+  const swaggerHabilitado = isSwaggerEnabled();
 
   if (swaggerHabilitado) {
     const config = new DocumentBuilder()

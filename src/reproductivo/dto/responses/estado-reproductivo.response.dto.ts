@@ -136,6 +136,13 @@ export class EstadoReproductivoResponseDto {
   proximosHitos: HitoReproductivoDto[];
 
   @ApiProperty({
+    example: true,
+    description:
+      'False si la hembra aún no cumple 15 meses o es Ternera. Sin fecha de nacimiento ni categoría no se afirma lo contrario.',
+  })
+  aptoParaPreniez: boolean;
+
+  @ApiProperty({
     type: [String],
     description:
       'Inconsistencias detectadas al derivar el estado, por ejemplo un evento sin su fila de detalle.',
