@@ -113,6 +113,9 @@ export class ReproductiveService {
       );
     }
 
+    this.validarCategoriaAptaParaPreniez(animal);
+    this.validarEdadMinimaParaPreniez(animal, dto.fechaEvento);
+
     const diasGestacion = animal.raza?.diasGestacion;
     if (!diasGestacion || diasGestacion <= 0) {
       throw new BadRequestException(
@@ -211,12 +214,15 @@ export class ReproductiveService {
     dto: RegistrarDiagnosticoDto,
     manager: EntityManager,
   ): Promise<{ evento: Evento; diagnostico: EventoDiagnostico }> {
-    await this.obtenerHembra(
+    const hembra = await this.obtenerHembra(
       animalId,
       tenantId,
       manager,
       'diagnósticos reproductivos',
     );
+    if (dto.resultado === 'Preñada') {
+      this.validarEdadMinimaParaPreniez(hembra, dto.fechaEvento);
+    }
 
     return manager.transaction(async (trx) => {
       await lockAnimalsForWrite(trx, tenantId, [animalId]);
@@ -237,6 +243,7 @@ export class ReproductiveService {
         );
       }
       this.validarCronologia(dto.fechaEvento, servicioEvento.fechaEvento, 'diagnóstico', 'servicio');
+      this.validarVentanaDiagnostico(servicioEvento.fechaEvento, dto.fechaEvento);
       await this.revertirEventoCorregido(
         dto.eventoCorrigeId,
         animalId,
@@ -318,7 +325,7 @@ export class ReproductiveService {
     dto: RegistrarPartoDto,
     manager: EntityManager,
   ): Promise<{ evento: Evento; parto: EventoParto }> {
-    await this.obtenerHembra(animalId, tenantId, manager, 'partos');
+    const hembra = await this.obtenerHembra(animalId, tenantId, manager, 'partos');
 
     if (dto.eventoServicioId) {
       const servicioEvento = await manager.findOne(Evento, {
@@ -401,6 +408,12 @@ export class ReproductiveService {
       }
       this.validarCronologia(dto.fechaEvento, servicioActivo.fechaServicio, 'parto', 'servicio');
       this.validarCronologia(dto.fechaEvento, diagnosticoActivo.fecha, 'parto', 'diagnóstico positivo');
+      this.validarGestacionMinimaParaParto(
+        hembra,
+        servicioActivo.fechaServicio,
+        dto.fechaEvento,
+        dto.facilidadParto,
+      );
       if (dto.eventoServicioId && dto.eventoServicioId !== servicioActivo.eventoId) {
         throw new BadRequestException(
           'El servicio asociado al parto debe coincidir con el ciclo reproductivo activo.',
@@ -615,7 +628,98 @@ export class ReproductiveService {
     return resultados.sort((a, b) => a.diasRestantes - b.diasRestantes);
   }
 
-  /** Busca el animal y confirma que sea hembra. */
+  /**
+   * Una hembra no queda Preñada ni recibe servicio antes de 15 meses de edad
+   * civil. Sin fecha de nacimiento no se afirma lo contrario.
+   */
+  private validarEdadMinimaParaPreniez(
+    animal: Pick<Animal, 'areteInterno' | 'fechaNacimiento'>,
+    fechaEvento: string,
+  ): void {
+    if (
+      this.calculationService.cumpleEdadMinimaParaPreniez(
+        animal.fechaNacimiento,
+        fechaEvento,
+      )
+    ) {
+      return;
+    }
+    throw new BadRequestException(
+      this.calculationService.mensajeEdadInsuficienteParaPreniez(
+        animal.areteInterno,
+        animal.fechaNacimiento as string,
+        fechaEvento,
+      ),
+    );
+  }
+
+  /**
+   * Ternera no entra al ciclo reproductivo. Sin categoría no se afirma lo contrario.
+   */
+  private validarCategoriaAptaParaPreniez(
+    animal: Pick<Animal, 'areteInterno' | 'categoria'>,
+  ): void {
+    if (this.calculationService.esCategoriaAptaParaPreniez(animal.categoria)) {
+      return;
+    }
+    throw new BadRequestException(
+      this.calculationService.mensajeCategoriaNoAptaParaPreniez(
+        animal.areteInterno,
+        animal.categoria,
+      ),
+    );
+  }
+
+  private validarVentanaDiagnostico(
+    fechaServicio: string,
+    fechaEvento: string,
+  ): void {
+    if (
+      this.calculationService.cumpleDiasMinimosPostServicioDiagnostico(
+        fechaServicio,
+        fechaEvento,
+      )
+    ) {
+      return;
+    }
+    throw new BadRequestException(
+      this.calculationService.mensajeDiagnosticoPrematuro(
+        fechaServicio,
+        fechaEvento,
+      ),
+    );
+  }
+
+  /**
+   * Parto viable demasiado temprano vs la gestación de la raza. Aborto no aplica.
+   */
+  private validarGestacionMinimaParaParto(
+    animal: Pick<Animal, 'raza'>,
+    fechaServicio: string,
+    fechaEvento: string,
+    facilidadParto: string | undefined,
+  ): void {
+    if (facilidadParto === 'Aborto') return;
+    const diasGestacion = animal.raza?.diasGestacion;
+    if (
+      this.calculationService.cumpleGestacionMinimaParaParto(
+        fechaServicio,
+        fechaEvento,
+        diasGestacion,
+      )
+    ) {
+      return;
+    }
+    throw new BadRequestException(
+      this.calculationService.mensajePartoPrematuro(
+        fechaServicio,
+        fechaEvento,
+        diasGestacion as number,
+      ),
+    );
+  }
+
+  /** Busca el animal y confirma que sea hembra apta para el ciclo. */
   private async obtenerHembra(
     animalId: string,
     tenantId: string,
@@ -624,6 +728,7 @@ export class ReproductiveService {
   ): Promise<Animal> {
     const animal = await manager.findOne(Animal, {
       where: { id: animalId, tenantId },
+      relations: { raza: true },
     });
     if (!animal) {
       throw new NotFoundException(`Animal con ID '${animalId}' no encontrado.`);
@@ -634,6 +739,7 @@ export class ReproductiveService {
       );
     }
     if (animal.activo === false) throw new ConflictException('El animal está dado de baja.');
+    this.validarCategoriaAptaParaPreniez(animal);
     return animal;
   }
 

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { derivarLactancia, type EventoLactancia } from './lactancia-calc.js';
+import {
+  derivarLactancia,
+  mensajeSinPartoPrevio,
+  tienePartoPrevio,
+  type EventoLactancia,
+} from './lactancia-calc.js';
 
 const ev = (
   id: string,
@@ -90,5 +95,29 @@ describe('derivarLactancia', () => {
         '2026-09-10',
       ).enLactancia,
     ).toBe(false);
+  });
+});
+
+describe('tienePartoPrevio', () => {
+  it('un parto viable o un aborto cuentan; un inicio de lactancia no', () => {
+    expect(tienePartoPrevio([ev('p1', 'PARTO', '2026-08-01')], '2026-09-01')).toBe(true);
+    expect(
+      tienePartoPrevio([ev('p1', 'PARTO', '2026-08-01', { esAborto: true })], '2026-09-01'),
+    ).toBe(true);
+    expect(tienePartoPrevio([ev('i1', 'INICIO_LACTANCIA', '2026-08-01')], '2026-09-01')).toBe(
+      false,
+    );
+  });
+
+  it('ignora partos revertidos o posteriores a la fecha', () => {
+    expect(
+      tienePartoPrevio([ev('p1', 'PARTO', '2026-08-01', { revertido: true })], '2026-09-01'),
+    ).toBe(false);
+    expect(tienePartoPrevio([ev('p1', 'PARTO', '2026-09-02')], '2026-09-01')).toBe(false);
+  });
+
+  it('el mensaje distingue ordeño de inicio de lactancia', () => {
+    expect(mensajeSinPartoPrevio('101', 'ordeñarse')).toMatch(/primer parto/);
+    expect(mensajeSinPartoPrevio('101', 'iniciar lactancia')).toMatch(/parto o aborto previo/);
   });
 });

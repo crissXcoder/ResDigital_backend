@@ -30,6 +30,33 @@ const NO_LACTANTE: EstadoLactancia = {
   eventoInicioId: null,
 };
 
+/**
+ * Hubo un parto (incluido aborto) en o antes de la fecha. Sin eso no se ordeña
+ * ni se abre una lactancia manual: el primer parto es el requisito biológico.
+ */
+export function tienePartoPrevio(
+  eventos: EventoLactancia[],
+  fechaReferencia: string,
+): boolean {
+  const ref = fechaReferencia.slice(0, 10);
+  return eventos.some(
+    (evento) =>
+      evento.tipo === 'PARTO' &&
+      !evento.revertido &&
+      evento.fechaEvento.slice(0, 10) <= ref,
+  );
+}
+
+export function mensajeSinPartoPrevio(
+  arete: string,
+  accion: 'iniciar lactancia' | 'ordeñarse',
+): string {
+  if (accion === 'ordeñarse') {
+    return `El animal con arete '${arete}' no puede ordeñarse hasta registrar su primer parto.`;
+  }
+  return `El animal con arete '${arete}' no puede iniciar lactancia: hace falta un parto o aborto previo. Regístrelo en el ciclo reproductivo.`;
+}
+
 function abreLactancia(evento: EventoLactancia): boolean {
   if (evento.tipo === 'INICIO_LACTANCIA') return true;
   return evento.tipo === 'PARTO' && !evento.esAborto;

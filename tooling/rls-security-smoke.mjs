@@ -95,10 +95,14 @@ try {
         'documento_animal',
         'evento',
         'evento_auth',
+        'evento_baja',
         'evento_diagnostico',
+        'evento_movimiento',
         'evento_parto',
+        'evento_produccion_leche',
         'evento_secado',
         'evento_servicio',
+        'evento_tratamiento',
         'invitacion',
         'pesaje',
         'potrero',
@@ -108,7 +112,7 @@ try {
       ],
     ],
   );
-  assert.equal(domainRows.length, 17);
+  assert.equal(domainRows.length, 21);
   for (const table of domainRows) {
     assert.equal(table.rls_enabled, true, `${table.relname} tiene RLS`);
     assert.equal(table.rls_forced, true, `${table.relname} fuerza RLS`);
@@ -246,7 +250,7 @@ try {
   }
 
   console.log(
-    'Smoke RLS confirmado: rol runtime, 17 tablas, cuatro JWT, PATCH denegado, tenants y defaults.',
+    'Smoke RLS confirmado: rol runtime, 21 tablas, cuatro JWT, PATCH denegado, tenants y defaults.',
   );
 } finally {
   // The fixture stays in the disposable database; migration-replay destroys it.

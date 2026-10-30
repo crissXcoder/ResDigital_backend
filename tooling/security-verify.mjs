@@ -14,10 +14,14 @@ export const CRITICAL_TABLES = [
   'documento_animal',
   'evento',
   'evento_auth',
+  'evento_baja',
   'evento_diagnostico',
+  'evento_movimiento',
   'evento_parto',
+  'evento_produccion_leche',
   'evento_secado',
   'evento_servicio',
+  'evento_tratamiento',
   'invitacion',
   'pesaje',
   'potrero',
@@ -25,6 +29,8 @@ export const CRITICAL_TABLES = [
   'tratamiento_sanitario',
   'usuario',
 ];
+
+const LEFTOVER_STORAGE_BUCKETS = ['documentos', 'animales-fotos'];
 
 function normalizePolicyRoles(roles) {
   if (Array.isArray(roles)) return roles;
@@ -152,6 +158,11 @@ export function evaluateSecuritySnapshot(snapshot, expectedMigrations) {
     'animal-docs-bucket',
   );
 
+  add(
+    (snapshot.leftoverPublicBuckets ?? []).length === 0,
+    'leftover-public-buckets',
+  );
+
   return failures;
 }
 
@@ -178,13 +189,15 @@ async function readSnapshot(root) {
     throw new Error('required-config');
   }
 
+  const needsVerifiedTls =
+    databaseUrl.includes('supabase') || process.env.NODE_ENV === 'production';
+  const ca = process.env.DATABASE_CA_CERT?.trim();
+  if (needsVerifiedTls && !ca) {
+    throw new Error('required-config');
+  }
   const database = new Client({
     connectionString: databaseUrl,
-    ssl: databaseUrl.includes('supabase')
-      ? process.env.DATABASE_CA_CERT
-        ? { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT }
-        : { rejectUnauthorized: false }
-      : false,
+    ssl: needsVerifiedTls ? { rejectUnauthorized: true, ca } : false,
     connectionTimeoutMillis: 10000,
     statement_timeout: 15000,
   });
@@ -271,6 +284,12 @@ async function readSnapshot(root) {
     const { data: bucket, error } = await supabase.storage.getBucket('animal_docs');
     if (error || !bucket) throw new Error('storage-config');
 
+    const leftoverPublicBuckets = [];
+    for (const name of LEFTOVER_STORAGE_BUCKETS) {
+      const leftover = await supabase.storage.getBucket(name);
+      if (leftover.data?.public === true) leftoverPublicBuckets.push(name);
+    }
+
     stage = 'compiled migration metadata';
     return {
       identity,
@@ -280,6 +299,7 @@ async function readSnapshot(root) {
       migrationTableExists,
       appliedMigrationNames,
       bucket,
+      leftoverPublicBuckets,
       expectedMigrations: await expectedMigrationNames(root),
     };
   } catch (error) {
@@ -320,6 +340,7 @@ async function main() {
     console.log('PASS tenant-scoped domain and Storage policies');
     console.log(`PASS migration history (${snapshot.expectedMigrations.length} code migrations applied)`);
     console.log('PASS private animal_docs bucket (10 MiB; PDF/PNG/JPEG)');
+    console.log('PASS leftover Storage buckets are not public');
     console.log('SECURITY VERIFY: PASS');
   } catch (error) {
     const failure = error?.message === 'required-config'
