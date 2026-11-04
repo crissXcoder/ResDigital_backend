@@ -19,6 +19,27 @@ export function hoyEnZona(zonaHoraria: string = ZONA_HORARIA_FINCA): string {
   }).format(new Date());
 }
 
+/** Edad mínima civil para servicio o diagnóstico de preñez. */
+export const MESES_MINIMOS_PARA_PRENEZ = 15;
+
+/**
+ * Categorías de hembra que aún no entran al ciclo reproductivo.
+ * Novilla, Vaca y las variantes de lactancia (Vaca en Ordeño, Vaca Seca) sí.
+ */
+export const CATEGORIAS_HEMBRA_NO_REPRODUCTORA = ['Ternera'] as const;
+
+/**
+ * Piso de la ventana de palpación (35–45 días). Un diagnóstico antes de esto
+ * no es concluyente; uno posterior sí se acepta.
+ */
+export const DIAS_MINIMOS_POST_SERVICIO_DIAGNOSTICO = 35;
+
+/**
+ * Un parto viable (Normal, Distocia, Cesárea) no puede ocurrir antes de este
+ * porcentaje de la gestación de la raza. El aborto no usa este piso.
+ */
+export const FRACCION_MINIMA_GESTACION_PARTO = 0.6;
+
 @Injectable()
 export class ReproductiveCalculationService {
   /**
@@ -154,5 +175,120 @@ export class ReproductiveCalculationService {
     const d = String(utcDate.getUTCDate()).padStart(2, '0');
 
     return `${y}-${m}-${d}`;
+  }
+
+  /**
+   * Suma meses de calendario civil. Si el día no existe en el mes destino
+   * (31 ene + 1 mes), usa el último día de ese mes.
+   */
+  addCalendarMonths(fechaStr: string, months: number): string {
+    const normalizada = this.normalizarFechaStr(fechaStr);
+    const [year, month, day] = normalizada.split('-').map(Number);
+    const index = year * 12 + (month - 1) + months;
+    const destinoYear = Math.floor(index / 12);
+    const destinoMonth = (index % 12) + 1;
+    const ultimoDia = new Date(
+      Date.UTC(destinoYear, destinoMonth, 0),
+    ).getUTCDate();
+    const destinoDay = Math.min(day, ultimoDia);
+    return `${destinoYear}-${String(destinoMonth).padStart(2, '0')}-${String(destinoDay).padStart(2, '0')}`;
+  }
+
+  /**
+   * True si a la fecha del evento la hembra ya cumplió `meses` de edad civil.
+   * Sin fecha de nacimiento no se puede afirmar lo contrario: no bloquea.
+   */
+  cumpleEdadMinimaParaPreniez(
+    fechaNacimiento: string | null | undefined,
+    fechaEvento: string,
+    meses: number = MESES_MINIMOS_PARA_PRENEZ,
+  ): boolean {
+    if (!fechaNacimiento) return true;
+    const nacimiento = this.normalizarFechaStr(fechaNacimiento);
+    const evento = this.normalizarFechaStr(fechaEvento);
+    return evento >= this.addCalendarMonths(nacimiento, meses);
+  }
+
+  mensajeEdadInsuficienteParaPreniez(
+    areteInterno: string,
+    fechaNacimiento: string,
+    fechaEvento: string,
+  ): string {
+    const aptaDesde = this.addCalendarMonths(
+      this.normalizarFechaStr(fechaNacimiento),
+      MESES_MINIMOS_PARA_PRENEZ,
+    );
+    return `La hembra con arete '${areteInterno}' no cumple ${MESES_MINIMOS_PARA_PRENEZ} meses de edad a la fecha ${fechaEvento}. Puede registrar preñez a partir del ${aptaDesde}.`;
+  }
+
+  /**
+   * Sin categoría no se afirma lo contrario: no bloquea. Ternera sí.
+   */
+  esCategoriaAptaParaPreniez(categoria: string | null | undefined): boolean {
+    if (!categoria) return true;
+    return !(CATEGORIAS_HEMBRA_NO_REPRODUCTORA as readonly string[]).includes(
+      categoria,
+    );
+  }
+
+  mensajeCategoriaNoAptaParaPreniez(
+    areteInterno: string,
+    categoria: string,
+  ): string {
+    return `La hembra con arete '${areteInterno}' está en categoría '${categoria}'. Una Ternera no registra servicio, diagnóstico de preñez ni parto; debe ser Novilla o Vaca.`;
+  }
+
+  fechaMinimaDiagnostico(fechaServicio: string): string {
+    return this.addDays(
+      this.normalizarFechaStr(fechaServicio),
+      DIAS_MINIMOS_POST_SERVICIO_DIAGNOSTICO,
+    );
+  }
+
+  cumpleDiasMinimosPostServicioDiagnostico(
+    fechaServicio: string,
+    fechaEvento: string,
+  ): boolean {
+    return (
+      this.normalizarFechaStr(fechaEvento) >=
+      this.fechaMinimaDiagnostico(fechaServicio)
+    );
+  }
+
+  mensajeDiagnosticoPrematuro(
+    fechaServicio: string,
+    fechaEvento: string,
+  ): string {
+    const minima = this.fechaMinimaDiagnostico(fechaServicio);
+    return `El diagnóstico del ${fechaEvento} es anterior a los ${DIAS_MINIMOS_POST_SERVICIO_DIAGNOSTICO} días post-servicio (mínimo ${minima}). La palpación se registra entre los días 35 y 45.`;
+  }
+
+  fechaMinimaPartoViable(
+    fechaServicio: string,
+    diasGestacion: number,
+  ): string {
+    const diasMinimos = Math.floor(diasGestacion * FRACCION_MINIMA_GESTACION_PARTO);
+    return this.addDays(this.normalizarFechaStr(fechaServicio), diasMinimos);
+  }
+
+  cumpleGestacionMinimaParaParto(
+    fechaServicio: string,
+    fechaEvento: string,
+    diasGestacion: number | null | undefined,
+  ): boolean {
+    if (!diasGestacion || diasGestacion <= 0) return true;
+    return (
+      this.normalizarFechaStr(fechaEvento) >=
+      this.fechaMinimaPartoViable(fechaServicio, diasGestacion)
+    );
+  }
+
+  mensajePartoPrematuro(
+    fechaServicio: string,
+    fechaEvento: string,
+    diasGestacion: number,
+  ): string {
+    const minima = this.fechaMinimaPartoViable(fechaServicio, diasGestacion);
+    return `El parto del ${fechaEvento} es demasiado temprano para una gestación de ${diasGestacion} días (mínimo ${minima}, 60 % de la gestación de la raza). Un aborto sí puede registrarse antes.`;
   }
 }

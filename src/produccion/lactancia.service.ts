@@ -10,9 +10,12 @@ import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoParto } from '../reproductivo/entities/evento-parto.entity.js';
 import { ReproductiveStateService } from '../reproductivo/services/reproductive-state.service.js';
 import { todayIsoDate } from '../tratamientos/retiro-calc.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 import {
   TIPOS_LACTANCIA,
   derivarLactancia,
+  mensajeSinPartoPrevio,
+  tienePartoPrevio,
   type EstadoLactancia,
   type EventoLactancia,
 } from './lactancia-calc.js';
@@ -22,6 +25,10 @@ import type {
   HembraEnLactanciaDto,
   RegistrarEventoLactanciaDto,
 } from './dto/lactancia.dto.js';
+
+export type EstadoLactanciaEvaluado = EstadoLactancia & {
+  tienePartoPrevio: boolean;
+};
 
 export function esHembra(animal: Pick<Animal, 'sexo'>): boolean {
   return animal.sexo?.toLowerCase() === 'hembra';
@@ -101,10 +108,16 @@ export class LactanciaService {
     tenantId: string,
     manager: EntityManager,
     fecha: string,
-  ): Promise<EstadoLactancia> {
-    if (!esHembra(animal)) return derivarLactancia([], fecha);
+  ): Promise<EstadoLactanciaEvaluado> {
+    if (!esHembra(animal)) {
+      return { ...derivarLactancia([], fecha), tienePartoPrevio: false };
+    }
     const eventos = await this.cargarEventos([animal.id], tenantId, manager);
-    return derivarLactancia(eventos.get(animal.id) ?? [], fecha);
+    const lista = eventos.get(animal.id) ?? [];
+    return {
+      ...derivarLactancia(lista, fecha),
+      tienePartoPrevio: tienePartoPrevio(lista, fecha),
+    };
   }
 
   async getEstado(
@@ -119,6 +132,7 @@ export class LactanciaService {
       return {
         animalId,
         ...derivarLactancia([], ref),
+        tienePartoPrevio: false,
         fechaReferencia: ref,
       };
     }
@@ -143,8 +157,10 @@ export class LactanciaService {
 
     const resultado: HembraEnLactanciaDto[] = [];
     for (const hembra of hembras) {
-      const estado = derivarLactancia(eventos.get(hembra.id) ?? [], ref);
+      const lista = eventos.get(hembra.id) ?? [];
+      const estado = derivarLactancia(lista, ref);
       if (!estado.enLactancia || !estado.fechaInicio) continue;
+      if (!tienePartoPrevio(lista, ref)) continue;
       resultado.push({
         animalId: hembra.id,
         arete: hembra.areteInterno,
@@ -177,6 +193,11 @@ export class LactanciaService {
       }
       this.validarFechaNoFutura(dto.fecha);
       const estado = await this.estadoDe(animal, tenantId, trx, dto.fecha);
+      if (!estado.tienePartoPrevio) {
+        throw new BadRequestException(
+          mensajeSinPartoPrevio(animal.areteInterno, 'iniciar lactancia'),
+        );
+      }
       if (estado.enLactancia) {
         throw new BadRequestException(
           `El animal con arete '${animal.areteInterno}' ya está en lactancia desde ${estado.fechaInicio}.`,
@@ -210,7 +231,7 @@ export class LactanciaService {
       }
       if (dto.fecha < actual.fechaInicio) {
         throw new BadRequestException(
-          `La fecha de fin (${dto.fecha}) no puede ser anterior al inicio de la lactancia (${actual.fechaInicio}).`,
+          `La fecha de fin (${formatearFechaLegible(dto.fecha)}) no puede ser anterior al inicio de la lactancia (${formatearFechaLegible(actual.fechaInicio)}).`,
         );
       }
       const reproductivo = await this.reproductiveState.calcularEstado(
@@ -231,7 +252,7 @@ export class LactanciaService {
     const hoy = todayIsoDate();
     if (fecha > hoy) {
       throw new BadRequestException(
-        `La fecha (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+        `La fecha (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
       );
     }
   }

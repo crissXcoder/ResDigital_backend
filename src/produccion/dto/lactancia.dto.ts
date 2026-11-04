@@ -45,6 +45,12 @@ export class EstadoLactanciaDto {
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   eventoInicioId: string | null;
 
+  @ApiProperty({
+    description:
+      'True si hay un parto (incluido aborto) no revertido en o antes de la fecha de referencia. Sin eso no se ordeña ni se inicia lactancia a mano.',
+  })
+  tienePartoPrevio: boolean;
+
   @ApiProperty({ example: '2026-10-06' })
   fechaReferencia: string;
 }

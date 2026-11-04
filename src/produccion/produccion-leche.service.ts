@@ -10,8 +10,10 @@ import { lockAnimalsForWrite } from '../animales/animal-write-lock.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
 import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 import { EventoProduccionLeche } from './entities/evento-produccion-leche.entity.js';
 import { resolverDisposicion } from './disposicion-calc.js';
+import { mensajeSinPartoPrevio } from './lactancia-calc.js';
 import {
   LactanciaService,
   bloquearAnimalProduccion,
@@ -144,7 +146,7 @@ export class ProduccionLecheService {
       const hoy = todayIsoDate();
       if (fecha > hoy) {
         throw new BadRequestException(
-          `La fecha de producción (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+          `La fecha de producción (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
         );
       }
       if (!esHembra(animal)) {
@@ -153,9 +155,14 @@ export class ProduccionLecheService {
         );
       }
       const lactancia = await this.lactancia.estadoDe(animal, tenantId, trx, fecha);
+      if (!lactancia.tienePartoPrevio) {
+        throw new BadRequestException(
+          mensajeSinPartoPrevio(animal.areteInterno, 'ordeñarse'),
+        );
+      }
       if (!lactancia.enLactancia) {
         throw new BadRequestException(
-          `El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Si ya se ordeña, registre primero el inicio de lactancia.`,
+          `El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Un parto (que no sea aborto) abre la lactancia; si fue aborto, inicie la lactancia desde la ficha.`,
         );
       }
 
@@ -484,7 +491,7 @@ export class ProduccionLecheService {
 
         if (fecha > hoy) {
           throw new BadRequestException(
-            `Fila ${i + 1}: La fecha de producción (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+            `Fila ${i + 1}: La fecha de producción (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
           );
         }
 
@@ -509,9 +516,14 @@ export class ProduccionLecheService {
         }
 
         const lactancia = await this.lactancia.estadoDe(animal, tenantId, trx, fecha);
+        if (!lactancia.tienePartoPrevio) {
+          throw new BadRequestException(
+            `Fila ${i + 1}: ${mensajeSinPartoPrevio(animal.areteInterno, 'ordeñarse')}`,
+          );
+        }
         if (!lactancia.enLactancia) {
           throw new BadRequestException(
-            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Si ya se ordeña, registre primero el inicio de lactancia.`,
+            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Un parto (que no sea aborto) abre la lactancia; si fue aborto, inicie la lactancia desde la ficha.`,
           );
         }
 
