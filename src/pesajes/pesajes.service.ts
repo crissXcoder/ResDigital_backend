@@ -8,6 +8,7 @@ import { Pesaje } from './entities/pesaje.entity.js';
 import { Animal } from '../animales/entities/animal.entity.js';
 import { CreatePesajeDto } from './dto/create-pesaje.dto.js';
 import { todayIsoDate } from '../tratamientos/retiro-calc.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 
 @Injectable()
 export class PesajesService {
@@ -23,7 +24,7 @@ export class PesajesService {
     const hoy = todayIsoDate();
     if (createDto.fecha > hoy) {
       throw new BadRequestException(
-        `La fecha del pesaje (${createDto.fecha}) no puede ser posterior a hoy (${hoy}).`,
+        `La fecha del pesaje (${formatearFechaLegible(createDto.fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
       );
     }
 

@@ -10,6 +10,7 @@ import { lockAnimalsForWrite } from '../animales/animal-write-lock.js';
 import { Evento } from '../eventos/entities/evento.entity.js';
 import { EventoTratamiento } from '../tratamientos/entities/evento-tratamiento.entity.js';
 import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
+import { formatearFechaLegible } from '../common/fechas.js';
 import { EventoProduccionLeche } from './entities/evento-produccion-leche.entity.js';
 import { resolverDisposicion } from './disposicion-calc.js';
 import {
@@ -144,7 +145,7 @@ export class ProduccionLecheService {
       const hoy = todayIsoDate();
       if (fecha > hoy) {
         throw new BadRequestException(
-          `La fecha de producción (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+          `La fecha de producción (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
         );
       }
       if (!esHembra(animal)) {
@@ -484,7 +485,7 @@ export class ProduccionLecheService {
 
         if (fecha > hoy) {
           throw new BadRequestException(
-            `Fila ${i + 1}: La fecha de producción (${fecha}) no puede ser posterior a hoy (${hoy}).`,
+            `Fila ${i + 1}: La fecha de producción (${formatearFechaLegible(fecha)}) no puede ser posterior a hoy (${formatearFechaLegible(hoy)}).`,
           );
         }
 
