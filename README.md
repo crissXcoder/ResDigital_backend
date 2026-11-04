@@ -1,27 +1,126 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# ResDigital — Backend (API)
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API de **ResDigital**, plataforma de trazabilidad y gestión ganadera para pequeños y medianos ganaderos de Costa Rica. Cubre hato, reproducción, sanidad (con retiros de leche y carne), potreros y producción lechera.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> El frontend vive en el repositorio `frontend`. Para ver la aplicación completa hay que levantar los dos.
 
-## Description
+## Stack
+
+| Capa | Tecnología |
+|---|---|
+| Framework | NestJS (ESM) + TypeScript |
+| Base de datos | PostgreSQL en Supabase, con TypeORM (solo migraciones; `synchronize` siempre en `false`) |
+| Autenticación | Supabase Auth. El backend solo verifica el JWT contra JWKS (ES256, librería `jose`); nunca ve contraseñas |
+| Autorización | Roles `propietario`, `administrador`, `peon`, `veterinario` + Row Level Security por finca (tenant) |
+| Seguridad | `helmet`, límite de peticiones (`express-rate-limit`), validación con `class-validator` |
+| Documentación | OpenAPI/Swagger en `/api` (solo si está habilitado) |
+| Pruebas | Vitest (unitarias, integración con RLS y e2e) |
+| Gestor de paquetes | pnpm 10.32.1, Node `>=24.14 <25` |
+
+## Requisitos
+
+- Node 24.14.x y pnpm 10.32.1.
+- Un proyecto de Supabase con su base de datos y Auth.
+- El certificado raíz de Supabase (hay una copia en `.certs/supabase-ca.pem`).
+
+## Puesta en marcha
+
+1. Instalar dependencias:
+
+   ```bash
+   pnpm install
+   ```
+
+2. Crear el archivo de entorno a partir del ejemplo y completar los valores:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Variables principales (los valores reales los entrega el equipo; **nunca** se suben al repositorio):
+
+   | Variable | Para qué sirve |
+   |---|---|
+   | `PORT` | Puerto de la API (por defecto `3001`) |
+   | `FRONTEND_URL` | Origen permitido por CORS (en local, `http://localhost:3000`) |
+   | `DATABASE_URL` | Cadena de conexión a PostgreSQL de Supabase |
+   | `DATABASE_CA_CERT` | **Obligatoria con Supabase.** Contenido PEM del certificado raíz |
+   | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` | Conexión a Supabase Auth |
+   | `SWAGGER_ENABLED` | Activa la documentación en `/api` |
+   | `THROTTLE_TTL`, `THROTTLE_LIMIT` | Ventana y límite de peticiones |
+
+   **Importante sobre `DATABASE_CA_CERT`:** si falta, la API no arranca y muestra el error "DATABASE_CA_CERT es obligatorio". Puede definirse en el `.env` con el contenido del PEM o exportarse al lanzar el proceso, por ejemplo en Git Bash:
+
+   ```bash
+   export DATABASE_CA_CERT="$(cat .certs/supabase-ca.pem)"
+   ```
+
+3. Aplicar las migraciones (crean tablas, políticas RLS y permisos):
+
+   ```bash
+   pnpm migration:run
+   ```
+
+4. Cargar datos de ejemplo para desarrollo (idempotente):
+
+   ```bash
+   pnpm seed:dev           # finca demo y usuarios de cada rol
+   pnpm seed:sanitary      # catálogos de medicamentos y padecimientos
+   pnpm seed:reproductivo  # animales y eventos reproductivos de ejemplo
+   ```
+
+   Los correos y contraseñas de los usuarios demo están en `src/database/scripts/seed-dev.ts`. Solo deben usarse en desarrollo.
+
+5. Levantar la API:
+
+   ```bash
+   pnpm start:dev     # modo desarrollo con recarga
+   pnpm start         # una sola ejecución
+   pnpm start:prod    # requiere `pnpm build` antes
+   ```
+
+   La API queda en `http://localhost:3001`. Una petición sin token a una ruta protegida responde `401`, lo que confirma que arrancó bien.
+
+## Estructura
+
+```
+src/
+  auth/          Verificación de JWT, roles, invitaciones, RLS por request
+  animales/      Hato, bajas, reactivación, documentos, genealogía
+  reproductivo/  Servicio, diagnóstico, parto, secado y estado reproductivo
+  tratamientos/  Tratamientos como eventos auditables y retiros de leche y carne
+  sanitary/      Catálogos de medicamentos y padecimientos
+  produccion/    Lactancia derivada y producción de leche (con descarte por retiro)
+  pesajes/       Pesajes (solo peso)
+  potreros/      Potreros, carga animal (UA) y movimientos
+  catalogos/     Razas
+  database/      Migraciones, scripts de seed y opciones SSL
+```
+
+## Pruebas
+
+```bash
+pnpm test               # unitarias
+pnpm test:integration   # integración y RLS: escriben en la base real de DATABASE_URL
+pnpm test:e2e           # extremo a extremo
+pnpm typecheck          # tipos
+pnpm lint               # oxlint
+```
+
+Las pruebas de integración escriben en la base configurada, por eso exigen una bandera explícita y dos usuarios de prueba existentes (`TEST_USER_A_ID`, `TEST_USER_B_ID`). Ver `.env.example`.
+
+## Contrato con el frontend
+
+El backend genera el contrato OpenAPI y lo sincroniza con el frontend:
+
+```bash
+pnpm openapi:generate   # genera openapi.json y lo copia al frontend
+pnpm openapi:check      # verifica que no haya desfase
+```
+
+## Zona horaria y formatos
+
+La fecha "de hoy" se calcula en la zona de la finca, `America/Costa_Rica` (UTC−6), y no en la del servidor. La API usa fechas `YYYY-MM-DD` y mensajes de validación en español con fechas `DD/MM/AAAA`.
 
 ## Git y CI
 
@@ -34,93 +133,3 @@
 - CD queda pendiente hasta definir ambientes, secretos, aprobadores y rollback.
 
 Detalles y activación remota requieren el protocolo documentado en `00-Sistema/Git-y-Entrega.md` dentro de la bóveda ResDigital.
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ pnpm install
-```
-
-## Compile and run the project
-
-```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
-```
-
-## Run tests
-
-```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
