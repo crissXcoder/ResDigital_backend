@@ -3376,6 +3376,11 @@
               "$ref": "#/components/schemas/HitoReproductivoDto"
             }
           },
+          "aptoParaPreniez": {
+            "type": "boolean",
+            "example": true,
+            "description": "False si la hembra aún no cumple 15 meses o su categoría es Ternera. Sin fecha de nacimiento ni categoría no se afirma lo contrario."
+          },
           "advertencias": {
             "description": "Inconsistencias detectadas al derivar el estado, por ejemplo un evento sin su fila de detalle.",
             "type": "array",
@@ -3390,6 +3395,7 @@
           "sexo",
           "estadoActual",
           "proximosHitos",
+          "aptoParaPreniez",
           "advertencias"
         ]
       },
@@ -3888,6 +3894,10 @@
             "format": "uuid",
             "nullable": true
           },
+          "tienePartoPrevio": {
+            "type": "boolean",
+            "description": "True si hay un parto (incluido aborto) no revertido en o antes de la fecha de referencia. Sin eso no se ordeña ni se inicia lactancia a mano."
+          },
           "fechaReferencia": {
             "type": "string",
             "example": "2026-10-06"
@@ -3898,6 +3908,7 @@
           "enLactancia",
           "fechaInicio",
           "eventoInicioId",
+          "tienePartoPrevio",
           "fechaReferencia"
         ]
       },

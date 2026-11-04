@@ -13,6 +13,7 @@ import { addCalendarDays, todayIsoDate } from '../tratamientos/retiro-calc.js';
 import { formatearFechaLegible } from '../common/fechas.js';
 import { EventoProduccionLeche } from './entities/evento-produccion-leche.entity.js';
 import { resolverDisposicion } from './disposicion-calc.js';
+import { mensajeSinPartoPrevio } from './lactancia-calc.js';
 import {
   LactanciaService,
   bloquearAnimalProduccion,
@@ -154,9 +155,14 @@ export class ProduccionLecheService {
         );
       }
       const lactancia = await this.lactancia.estadoDe(animal, tenantId, trx, fecha);
+      if (!lactancia.tienePartoPrevio) {
+        throw new BadRequestException(
+          mensajeSinPartoPrevio(animal.areteInterno, 'ordeñarse'),
+        );
+      }
       if (!lactancia.enLactancia) {
         throw new BadRequestException(
-          `El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Si ya se ordeña, registre primero el inicio de lactancia.`,
+          `El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Un parto (que no sea aborto) abre la lactancia; si fue aborto, inicie la lactancia desde la ficha.`,
         );
       }
 
@@ -510,9 +516,14 @@ export class ProduccionLecheService {
         }
 
         const lactancia = await this.lactancia.estadoDe(animal, tenantId, trx, fecha);
+        if (!lactancia.tienePartoPrevio) {
+          throw new BadRequestException(
+            `Fila ${i + 1}: ${mensajeSinPartoPrevio(animal.areteInterno, 'ordeñarse')}`,
+          );
+        }
         if (!lactancia.enLactancia) {
           throw new BadRequestException(
-            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Si ya se ordeña, registre primero el inicio de lactancia.`,
+            `Fila ${i + 1}: El animal con arete '${animal.areteInterno}' no está en lactancia el ${fecha}. Un parto (que no sea aborto) abre la lactancia; si fue aborto, inicie la lactancia desde la ficha.`,
           );
         }
 

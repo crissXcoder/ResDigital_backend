@@ -43,6 +43,16 @@ export const envSchema = z
     message:
       'FRONTEND_URL es obligatoria en producción (origen permitido de CORS).',
     path: ['FRONTEND_URL'],
+  })
+  // TLS sin CA deja la conexión a Postgres expuesta a un intermediario.
+  .refine((env) => {
+    const needsCa =
+      env.NODE_ENV === 'production' || env.DATABASE_URL.includes('supabase');
+    return !needsCa || Boolean(env.DATABASE_CA_CERT?.trim());
+  }, {
+    message:
+      'DATABASE_CA_CERT es obligatorio para validar el certificado TLS (producción o Supabase).',
+    path: ['DATABASE_CA_CERT'],
   });
 
 export type Env = z.infer<typeof envSchema>;

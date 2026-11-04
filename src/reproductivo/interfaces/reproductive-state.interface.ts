@@ -82,6 +82,11 @@ export interface EstadoReproductivoInfo {
   ultimoSecado?: ResumenSecadoActivo;
   proximosHitos?: HitoReproductivo[];
   /**
+   * False si la hembra aún no cumple 15 meses o su categoría es Ternera.
+   * Sin fecha de nacimiento ni categoría no se afirma lo contrario.
+   */
+  aptoParaPreniez?: boolean;
+  /**
    * Inconsistencias detectadas al derivar el estado (por ejemplo, un evento sin
    * su fila de detalle). Antes estos casos se ignoraban en silencio y producían
    * un estado incorrecto sin ninguna señal.

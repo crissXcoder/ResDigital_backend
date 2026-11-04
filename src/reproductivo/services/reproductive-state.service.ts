@@ -290,7 +290,10 @@ export class ReproductiveStateService {
    *   En Secado → Vacía      parto
    */
   derivarEstadoDesdeEventos(
-    animal: Pick<Animal, 'id' | 'areteInterno' | 'sexo'> & {
+    animal: Pick<
+      Animal,
+      'id' | 'areteInterno' | 'sexo' | 'fechaNacimiento' | 'categoria'
+    > & {
       raza?: { nombre?: string; diasGestacion?: number } | null;
     },
     eventosHistoricos: EventoHistoricoReproductivo[],
@@ -425,6 +428,32 @@ export class ReproductiveStateService {
       fechaReferencia,
     );
 
+    const aptaPorEdad = this.calculationService.cumpleEdadMinimaParaPreniez(
+      animal.fechaNacimiento,
+      fechaReferencia,
+    );
+    const aptaPorCategoria = this.calculationService.esCategoriaAptaParaPreniez(
+      animal.categoria,
+    );
+    const aptoParaPreniez = aptaPorEdad && aptaPorCategoria;
+    if (!aptaPorEdad && animal.fechaNacimiento) {
+      advertencias.push(
+        this.calculationService.mensajeEdadInsuficienteParaPreniez(
+          animal.areteInterno,
+          animal.fechaNacimiento,
+          fechaReferencia,
+        ),
+      );
+    }
+    if (!aptaPorCategoria && animal.categoria) {
+      advertencias.push(
+        this.calculationService.mensajeCategoriaNoAptaParaPreniez(
+          animal.areteInterno,
+          animal.categoria,
+        ),
+      );
+    }
+
     return {
       animalId: animal.id,
       areteInterno: animal.areteInterno,
@@ -440,6 +469,7 @@ export class ReproductiveStateService {
       ultimoParto,
       ultimoSecado,
       proximosHitos,
+      aptoParaPreniez,
       advertencias,
     };
   }

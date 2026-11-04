@@ -521,7 +521,9 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       const fechaDiagnosticoNegativo = new Date(
         `${nuevoCiclo.evento.fechaEvento}T00:00:00.000Z`,
       );
-      fechaDiagnosticoNegativo.setUTCDate(fechaDiagnosticoNegativo.getUTCDate() + 1);
+      fechaDiagnosticoNegativo.setUTCDate(
+        fechaDiagnosticoNegativo.getUTCDate() + 40,
+      );
       fechaCierreCiclo = fechaDiagnosticoNegativo.toISOString().slice(0, 10);
       await reproService.registrarDiagnostico(
         animalId,
@@ -650,16 +652,16 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
       ).sort(),
     );
 
-    const diaSiguiente = (date: string): string => {
+    const sumarDias = (date: string, dias: number): string => {
       const next = new Date(`${date}T00:00:00.000Z`);
-      next.setUTCDate(next.getUTCDate() + 1);
+      next.setUTCDate(next.getUTCDate() + dias);
       return next.toISOString().slice(0, 10);
     };
     const diagnostico = await request(app.getHttpServer())
       .post(`/animales/${animalId}/diagnosticos`)
       .set('Authorization', authorization)
       .send({
-        fechaEvento: diaSiguiente(response.body.evento.fechaEvento),
+        fechaEvento: sumarDias(response.body.evento.fechaEvento, 40),
         eventoServicioId: response.body.evento.id,
         metodo: 'Palpación',
         resultado: 'Preñada',
@@ -678,7 +680,7 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
     const secado = await request(app.getHttpServer())
       .post(`/animales/${animalId}/secados`)
       .set('Authorization', authorization)
-      .send({ fechaEvento: diaSiguiente(diagnostico.body.evento.fechaEvento) })
+      .send({ fechaEvento: sumarDias(diagnostico.body.evento.fechaEvento, 1) })
       .expect(201);
     expect(
       specification.paths['/animales/{id}/secados'].post.responses['201']
@@ -693,7 +695,9 @@ describe('Test End-to-End Flujo Reproductivo Completo (PostgreSQL local descarta
     const parto = await request(app.getHttpServer())
       .post(`/animales/${animalId}/partos`)
       .set('Authorization', authorization)
-      .send({ fechaEvento: diaSiguiente(secado.body.evento.fechaEvento) })
+      .send({
+        fechaEvento: sumarDias(response.body.evento.fechaEvento, 180),
+      })
       .expect(201);
     expect(
       specification.paths['/animales/{id}/partos'].post.responses['201']

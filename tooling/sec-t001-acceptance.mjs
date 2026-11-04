@@ -51,12 +51,17 @@ const redactions = [
   databaseUrl,
   decodeURIComponent(dbUrl.password),
 ];
+if (databaseUrl.includes('supabase') && !process.env.DATABASE_CA_CERT?.trim()) {
+  throw new Error(
+    'DATABASE_CA_CERT es obligatorio para validar el certificado TLS de Supabase.',
+  );
+}
 const client = new pg.Client({
   connectionString: databaseUrl,
   connectionTimeoutMillis: 10000,
-  ssl: process.env.DATABASE_CA_CERT
+  ssl: databaseUrl.includes('supabase')
     ? { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT }
-    : { rejectUnauthorized: false },
+    : false,
 });
 let connected = false;
 let browser;

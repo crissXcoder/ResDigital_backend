@@ -53,6 +53,7 @@ function safeSnapshot() {
       file_size_limit: 10 * 1024 * 1024,
       allowed_mime_types: ['application/pdf', 'image/jpeg', 'image/png'],
     },
+    leftoverPublicBuckets: [],
   };
 }
 
@@ -86,8 +87,21 @@ test('fails closed for pending migrations and unsafe bucket configuration', () =
   snapshot.bucket.public = true;
   snapshot.bucket.file_size_limit = 1024;
   snapshot.bucket.allowed_mime_types = ['image/*'];
+  snapshot.leftoverPublicBuckets = ['documentos'];
   assert.deepEqual(evaluateSecuritySnapshot(snapshot, ['MigrationOne', 'MigrationTwo']), [
     'migration-history',
     'animal-docs-bucket',
+    'leftover-public-buckets',
   ]);
+});
+
+test('incluye las tablas de detalle nuevas en el contrato de RLS', () => {
+  for (const table of [
+    'evento_baja',
+    'evento_movimiento',
+    'evento_produccion_leche',
+    'evento_tratamiento',
+  ]) {
+    assert.equal(CRITICAL_TABLES.includes(table), true);
+  }
 });

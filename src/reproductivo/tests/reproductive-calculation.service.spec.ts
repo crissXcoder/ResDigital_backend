@@ -214,4 +214,59 @@ describe('ReproductiveCalculationService (Cálculo Puro de Hitos Veterinarios)',
       expect(new Date().toISOString().slice(0, 10)).toBe('2026-09-18');
     });
   });
+
+  describe('edad mínima de 15 meses para preñez', () => {
+    it('suma meses civiles y ajusta el día si el mes destino es más corto', () => {
+      expect(service.addCalendarMonths('2025-07-22', 15)).toBe('2026-10-22');
+      expect(service.addCalendarMonths('2025-01-31', 15)).toBe('2026-04-30');
+    });
+
+    it('rechaza el día anterior a cumplir 15 meses y acepta el mismo día', () => {
+      expect(
+        service.cumpleEdadMinimaParaPreniez('2025-07-22', '2026-10-21'),
+      ).toBe(false);
+      expect(
+        service.cumpleEdadMinimaParaPreniez('2025-07-22', '2026-10-22'),
+      ).toBe(true);
+    });
+
+    it('sin fecha de nacimiento no bloquea', () => {
+      expect(service.cumpleEdadMinimaParaPreniez(null, '2026-10-22')).toBe(true);
+    });
+  });
+
+  describe('categoría, palpación y gestación mínima', () => {
+    it('Novilla, Vaca y variantes de lactancia son aptas; Ternera no; sin categoría no bloquea', () => {
+      expect(service.esCategoriaAptaParaPreniez('Vaca')).toBe(true);
+      expect(service.esCategoriaAptaParaPreniez('Novilla')).toBe(true);
+      expect(service.esCategoriaAptaParaPreniez('Vaca en Ordeño')).toBe(true);
+      expect(service.esCategoriaAptaParaPreniez('Vaca Seca')).toBe(true);
+      expect(service.esCategoriaAptaParaPreniez('Ternera')).toBe(false);
+      expect(service.esCategoriaAptaParaPreniez(null)).toBe(true);
+    });
+
+    it('diagnóstico a 34 días es prematuro y a 35 días ya entra en ventana', () => {
+      expect(
+        service.cumpleDiasMinimosPostServicioDiagnostico('2026-03-01', '2026-04-04'),
+      ).toBe(false);
+      expect(
+        service.cumpleDiasMinimosPostServicioDiagnostico('2026-03-01', '2026-04-05'),
+      ).toBe(true);
+      expect(service.fechaMinimaDiagnostico('2026-03-01')).toBe('2026-04-05');
+    });
+
+    it('parto viable de Holstein no entra antes del 60 % de gestación; aborto no usa este piso', () => {
+      // 281 * 0.6 = 168.6 → 168 días: 2026-03-01 + 168 = 2026-08-16
+      expect(service.fechaMinimaPartoViable('2026-03-01', 281)).toBe('2026-08-16');
+      expect(
+        service.cumpleGestacionMinimaParaParto('2026-03-01', '2026-08-15', 281),
+      ).toBe(false);
+      expect(
+        service.cumpleGestacionMinimaParaParto('2026-03-01', '2026-08-16', 281),
+      ).toBe(true);
+      expect(
+        service.cumpleGestacionMinimaParaParto('2026-03-01', '2026-04-01', null),
+      ).toBe(true);
+    });
+  });
 });
